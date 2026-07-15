@@ -82,7 +82,7 @@ runs:
 
     - name: Push extracted toolchain to repo (slow path only)
       if: steps.provision.outputs.toolchain-just-extracted == 'true'
-      uses: ./.github/workflows/out
+      uses: ./.github/actions/push-output
       with:
         label: "msvc120-toolchain"
         paths: "tools/msvc120-x86.zip"
