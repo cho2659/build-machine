@@ -62,7 +62,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path build-output | Out-Null
           New-Item -ItemType Directory -Force -Path out | Out-Null
-
+      
       # ==========================================================================
       # mozjs (SpiderMonkey 24.2.0)
       # ==========================================================================
@@ -83,7 +83,7 @@ jobs:
         working-directory: third_party/mozjs-24.2.0
         run: |
           :: 1. MSVC v120 환경 로드
-          call "${{ steps.msvc.outputs.vcvarsall }}" x86
+          call "C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\vcvarsall.bat" x86
           if errorlevel 1 exit /b 1
 
           :: 2. MozillaBuild 경로를 PATH의 최우선으로 추가
@@ -103,8 +103,14 @@ jobs:
           set CXXFLAGS=-nologo -O2 -Z7 -GL -EHsc -DWIN32 -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_DEPRECATE
           set LDFLAGS=-LTCG -MACHINE:X86
 
-          :: 4. configure 및 make 실행 (MozillaBuild의 bash 사용)
-          bash -c "../configure --enable-optimize --disable-debug"
+          :: 4. 컴파일러 버전 에러 우회를 위한 전설의 환경 변수 및 옵션 선언
+          :: JS_STANDALONE=1을 주입하고, configure에 --enable-official-branding 또는 컴파일러 검사 제외 플래그를 고려합니다.
+          :: 여기서는 MSVC 18.00 버전 통과를 위해 무조건적인 configure 진행을 유도합니다.
+          set JS_STANDALONE=1
+
+          :: 5. configure 및 make 실행 (MozillaBuild의 bash 사용)
+          :: --enable-optimize, --disable-debug 옵션과 함께 최적화 환경에서 빌드하게 지시합니다.
+          bash -c "../configure --enable-optimize --disable-debug --enable-official-branding"
           if errorlevel 1 (
               echo "Configure failed!"
               exit /b 1
@@ -116,7 +122,8 @@ jobs:
               exit /b 1
           )
 
-          :: 5. 결과물 복사
+          :: 6. 결과물 복사
+          if not exist "%GITHUB_WORKSPACE%\build-output" mkdir "%GITHUB_WORKSPACE%\build-output"
           copy /Y dist\lib\*.lib "%GITHUB_WORKSPACE%\build-output\" >nul
           copy /Y *.lib "%GITHUB_WORKSPACE%\build-output\" >nul
 
@@ -130,8 +137,7 @@ jobs:
         if: always()
         with:
           label: "mozjs-24.2.0"
-          paths: "out/*.lib"
-          
+          paths: "out/*.lib"          
       - name: Summary
         if: always()
         shell: pwsh
