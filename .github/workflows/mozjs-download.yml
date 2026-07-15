@@ -1,0 +1,48 @@
+name: Build Third-Party Libraries
+
+on:
+  workflow_dispatch: # 수동 실행 기능하도록 설정
+
+jobs:
+  build-dependencies:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 메인 리포지토리 체크아웃
+      # [중คัญ] push를 해야 하므로 fetch-depth를 0으로 설정하여 전체 기록을 가져옵니다.
+      - name: Checkout main repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. 서드파티 소스들을 저장할 폴더 생성
+      - name: Create third-party directory
+        run: mkdir -p third_party
+
+      # 3. 다운로드 및 압축 해제 단계
+      - name: Download and Extract Third-Party Sources
+        run: |
+          cd third_party
+          
+          echo "=== 1. mozjs ==="
+          wget -q https://ftp.mozilla.org/pub/js/mozjs-24.2.0.tar.bz2 -O mozjs-24.2.0.tar.bz2
+          tar -xf mozjs-24.2.0.tar.bz2 && rm mozjs-24.2.0.tar.bz2
+
+      # 4. 내 레포지토리에 실제로 Commit 하고 Push 하기
+      - name: Commit and Push to Repository
+        run: |
+          # Git 사용자 설정 (봇 이름으로 세팅)
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 변경사항(새로 생성된 third_party 내부 폴더들) 감지하여 스테이징
+          git add third_party/
+          
+          # 새로 추가된 내역이 있을 때만 커밋 및 푸시 실행 (무한 루프 방지)
+          if ! git diff --cached --quiet; then
+            git commit -m "docs: add downloaded third-party sources to repository"
+            git push origin main
+            echo "Changes pushed successfully!"
+          else
+            echo "No changes to commit."
+          fi
