@@ -34,12 +34,6 @@ name: Build third_party libs (MSVC 12.0 / v120 toolset)
 # =============================================================================
 
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "third_party/**"
-      - ".github/workflows/build-msvc120-libs.yml"
-      - ".github/actions/**"
   workflow_dispatch:
 
 # push하는 워크플로우이므로 같은 브랜치에서 여러 실행이 겹쳐 out/, tools/
