@@ -1,0 +1,114 @@
+name: Build third_party libs (MSVC 12.0 / v120 toolset)
+
+# =============================================================================
+# third_party 내 6개 라이브러리를 MSVC 12.0 (Visual Studio 2013 Update 5,
+# v120 toolset)으로 빌드해 .lib 로 산출한다.
+#
+#   컴파일 : cl /c /O2 /Z7 /GL /EHsc /D "WIN32" ...
+#   보관   : lib /LTCG /MACHINE:X86 /OUT:xxx.lib *.obj
+#
+# 파일 구성:
+#   - MSVC v120 설치/복원  -> .github/actions/setup-msvc120/action.yml (별도)
+#   - git push (재시도)    -> .github/actions/push-output/action.yml   (별도)
+#   - 6개 라이브러리 빌드  -> 이 파일 하나에 통합 (단일 job, 순차 step)
+#
+# 동작 방식:
+#   - 모든 라이브러리 빌드가 하나의 job 안에서 순서대로 실행된다.
+#   - 각 빌드 step은 continue-on-error: true 라 실패해도 job이 멈추지 않고
+#     바로 다음 라이브러리 빌드로 넘어간다 (스킵).
+#   - 각 빌드 step 직후 결과물이 있으면 바로 git push 한다 (build-output/ 이
+#     비어 있으면, 즉 실패했으면 push-output이 조용히 스킵).
+#
+# ⚠️ 캐비어트
+#   1) windows-2022 러너의 VS2022 설치 프로그램에는 "v120 (VS2013)" 개별
+#      구성 요소가 없다 (VS2017부터 side-by-side 레거시 툴셋을 v140까지만
+#      남기고 제거 - github.com/actions/runner-images#7390). setup-msvc120
+#      action이 VS2013 Update 5 Desktop Express ISO를 직접 받아 설치하고,
+#      필요한 VC\ 서브트리만 추출해 repo에 push해 다음 실행부터는
+#      재설치 없이 복원만 하도록 한다.
+#   2) js-1.8.5 (SpiderMonkey)는 configure 기반 빌드라 다른 5개와 다르고,
+#      MozillaBuild 툴체인이 2011년 소스와 100% 호환된다는 보장이 없어
+#      best-effort로 처리한다.
+#   3) tiff-v3.4의 u_long/u_short/u_char 미정의(C2016/C2061), version.h
+#      누락(C1083) 컴파일 실패는 아래 tiff step 안에서 직접 고친다.
+# =============================================================================
+
+on:
+  workflow_dispatch:
+
+# push하는 워크플로우이므로 같은 브랜치에서 여러 실행이 겹쳐 out/, tools/
+# 커밋이 서로 경쟁하지 않도록 순차 실행시킨다.
+concurrency:
+  group: build-msvc120-libs-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: mozjs build
+        id: msvc
+        uses: ./.github/actions/setup-msvc120
+
+      - name: Prepare output dirs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-output | Out-Null
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+
+      # ==========================================================================
+      # mozjs
+      # ==========================================================================
+      - name: Build mozjs-24.2.0
+        id: build-mozjs
+        continue-on-error: true
+        shell: cmd
+        working-directory: third_party/mozjs-24.2.0
+        run: |
+          call "${{ steps.msvc.outputs.vcvarsall }}" x86
+          if errorlevel 1 exit /b 1
+
+          if not exist build mkdir build
+          cd build
+
+          cl /nologo /c /O2 /Z7 /GL /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
+            ..\adler32.c ..\compress.c ..\crc32.c ..\deflate.c ..\gzio.c ^
+            ..\infback.c ..\inffast.c ..\inflate.c ..\inftrees.c ..\trees.c ^
+            ..\uncompr.c ..\zutil.c
+          if errorlevel 1 exit /b 1
+
+          lib /nologo /LTCG /MACHINE:X86 /OUT:zlib-1.2.1.lib *.obj
+          if errorlevel 1 exit /b 1
+
+          copy /Y zlib-1.2.1.lib "%GITHUB_WORKSPACE%\build-output\" >nul
+
+      - name: Push mozjs-24.2.0 output
+        if: always()
+        shell: pwsh
+        run: |
+          Get-ChildItem build-output\zlib-1.2.1.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
+      - uses: ./.github/actions/push-output
+        if: always()
+        with:
+          label: "mozjs-24.2.0"
+          paths: "out/*.lib"
+
+      - name: Summary
+        if: always()
+        shell: pwsh
+        run: |
+          $results = @{
+            "mozjs-24.2.0"      = "${{ steps.build-mozjs.outcome }}"
+          }
+          foreach ($k in $results.Keys) {
+            $v = $results[$k]
+            if ($v -eq "success") { Write-Host "[OK]   $k" }
+            else { Write-Host "::warning::[SKIP] $k ($v) - see its build step log above" }
+          }
