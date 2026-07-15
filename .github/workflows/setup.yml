@@ -1,0 +1,88 @@
+name: "Setup MSVC 12.0 (v120)"
+description: >
+  VS2013 Update 5 (v120) 커맨드라인 툴체인을 준비한다.
+  repo에 tools/msvc120-x86.zip 이 이미 push되어 있으면 그것만 풀어서 복원
+  (fast path). 없으면 최초 1회만 VS2013 Desktop Express ISO를 내려받아
+  설치하고, 빌드에 필요한 VC\ 서브트리만 추출해 zip으로 repo에 push한다
+  (slow path). windows-2022 러너의 VS2022 설치 프로그램에는 v120 개별
+  구성요소가 없으므로(github.com/actions/runner-images#7390) 이 방식이
+  필요하다.
+outputs:
+  vcvarsall:
+    description: "설치된 vcvarsall.bat 의 절대 경로"
+    value: ${{ steps.provision.outputs.vcvarsall }}
+runs:
+  using: "composite"
+  steps:
+    - name: Cache VS2013 ISO download (slow path에서만 사용)
+      if: hashFiles('tools/msvc120-x86.zip') == ''
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}\vs2013.iso
+        key: vs2013-update5-dskexp-iso-v1
+
+    - name: Provision or restore v120 toolchain
+      id: provision
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+
+        $RepoZip   = "tools\msvc120-x86.zip"
+        $VsDir     = "C:\Program Files (x86)\Microsoft Visual Studio 12.0"
+        $VcVarsAll = "$VsDir\VC\vcvarsall.bat"
+        $IsoUrl    = "http://download.microsoft.com/download/2/E/E/2EEC68E6-7B03-437A-AF06-F8E43F04014D/vs2013.5_dskexp_ENU.iso"
+        $IsoPath   = "$env:RUNNER_TEMP\vs2013.iso"
+
+        function Export-VcVarsAll {
+            if (-not (Test-Path $VcVarsAll)) {
+                throw "[FATAL] vcvarsall.bat not found at '$VcVarsAll'."
+            }
+            Write-Host "vcvarsall.bat ready at $VcVarsAll"
+            "vcvarsall=$VcVarsAll" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            "VCVARSALL=$VcVarsAll" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        }
+
+        if (Test-Path $RepoZip) {
+            Write-Host "Found $RepoZip - restoring pushed toolchain (fast path)."
+            New-Item -ItemType Directory -Force -Path $VsDir | Out-Null
+            Expand-Archive -Path $RepoZip -DestinationPath $VsDir -Force
+            Export-VcVarsAll
+            exit 0
+        }
+
+        Write-Host "No pushed toolchain found - installing VS2013 Update 5 (Desktop Express) from ISO (slow path, first run only)."
+        Invoke-WebRequest -Uri $IsoUrl -OutFile $IsoPath -UseBasicParsing
+        $sizeMB = [Math]::Round((Get-Item $IsoPath).Length / 1MB, 1)
+        Write-Host "Downloaded $IsoPath ($sizeMB MB)"
+
+        $logPath = "$env:RUNNER_TEMP\vs2013_install.log"
+        $mount = Mount-DiskImage -ImagePath $IsoPath -PassThru
+        $driveLetter = ($mount | Get-Volume).DriveLetter
+        $setupExe = "${driveLetter}:\wdexpress_full.exe"
+        Write-Host "Mounted ISO at ${driveLetter}: - running $setupExe (silent)"
+        $proc = Start-Process -FilePath $setupExe -ArgumentList "/Q", "/NoRestart", "/Log", $logPath -Wait -PassThru
+        Write-Host "Installer exit code: $($proc.ExitCode)"
+        Dismount-DiskImage -ImagePath $IsoPath
+
+        # 0 = success, 3010 = success but reboot pending (files already laid down).
+        if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
+            Get-Content $logPath -ErrorAction SilentlyContinue | Select-Object -Last 200
+            throw "[FATAL] VS2013 installer failed with exit code $($proc.ExitCode)"
+        }
+
+        Export-VcVarsAll
+
+        Write-Host "Packaging minimal v120 toolchain subset (VC\ subtree only)..."
+        $tmpZip = "$env:RUNNER_TEMP\msvc120-x86.zip"
+        Compress-Archive -Path "$VsDir\VC" -DestinationPath $tmpZip -Force
+        New-Item -ItemType Directory -Force -Path "tools" | Out-Null
+        Copy-Item $tmpZip -Destination $RepoZip -Force
+
+        Write-Host "toolchain-just-extracted=true" >> $env:GITHUB_OUTPUT
+
+    - name: Push extracted toolchain to repo (slow path only)
+      if: steps.provision.outputs.toolchain-just-extracted == 'true'
+      uses: ./.github/actions/push-output
+      with:
+        label: "msvc120-toolchain"
+        paths: "tools/msvc120-x86.zip"

@@ -1,0 +1,71 @@
+name: "Push build output to repo"
+description: >
+  전달받은 경로(glob 가능)를 git add/commit/push 한다. 여러 matrix job이
+  동시에 같은 브랜치로 push할 수 있어 rejection 시 fetch+rebase 후
+  재시도한다. 경로가 하나도 존재하지 않으면(=빌드 실패) 조용히 종료한다.
+inputs:
+  label:
+    description: "커밋 메시지/로그에 쓰일 라벨 (예: zlib, msvc120-toolchain)"
+    required: true
+  paths:
+    description: "git add 할 경로 (공백으로 구분된 glob 여러 개 가능, 예: 'out/*.lib')"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Commit and push (with retry)
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Continue"
+
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        $label = "${{ inputs.label }}"
+        $patterns = "${{ inputs.paths }}" -split '\s+' | Where-Object { $_ -ne "" }
+        $existing = $patterns | ForEach-Object { Get-ChildItem -Path $_ -ErrorAction SilentlyContinue } |
+                    ForEach-Object { $_.FullName }
+
+        if (-not $existing) {
+            Write-Host "[WARN] No files match '${{ inputs.paths }}' for '$label' - nothing to push (build likely failed)."
+            exit 0
+        }
+
+        $branch = $env:GITHUB_REF_NAME
+        $pushed = $false
+
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
+            git add -- $patterns
+
+            $status = git status --porcelain
+            if (-not $status) {
+                Write-Host "Nothing new to commit for '$label'."
+                $pushed = $true
+                break
+            }
+
+            git commit -m "ci: add $label output [skip ci]" | Out-Null
+
+            git fetch origin $branch 2>$null
+            git rebase "origin/$branch" 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Rebase conflict on attempt $attempt for '$label' - aborting and retrying."
+                git rebase --abort 2>$null
+                Start-Sleep -Seconds (Get-Random -Minimum 3 -Maximum 10)
+                continue
+            }
+
+            git push origin "HEAD:$branch"
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "Pushed '$label' output to $branch."
+                $pushed = $true
+                break
+            }
+
+            Write-Host "Push rejected on attempt $attempt for '$label' - retrying."
+            Start-Sleep -Seconds (Get-Random -Minimum 3 -Maximum 10)
+        }
+
+        if (-not $pushed) {
+            Write-Host "::warning::Failed to push '$label' output after multiple retries."
+        }
