@@ -1,4 +1,4 @@
-name: Build third_party libs (MSVC 12.0 / v120 toolset)
+name: Build mozjs-24.2.0 (MSVC 12.0 / v120 toolset)
 
 # =============================================================================
 # third_party 내 6개 라이브러리를 MSVC 12.0 (Visual Studio 2013 Update 5,
@@ -64,42 +64,74 @@ jobs:
           New-Item -ItemType Directory -Force -Path out | Out-Null
 
       # ==========================================================================
-      # mozjs
+      # mozjs (SpiderMonkey 24.2.0)
       # ==========================================================================
+      - name: Install MozillaBuild
+        shell: pwsh
+        run: |
+          # SpiderMonkey 24 빌드에 적합한 구형 MozillaBuild 2.2.0 다운로드 및 조용한 설치
+          Write-Host "Downloading MozillaBuild..."
+          Invoke-WebRequest -Uri "https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-2.2.0.exe" -OutFile "mozillabuild.exe"
+          Write-Host "Installing MozillaBuild to C:\mozilla-build..."
+          Start-Process -FilePath ".\mozillabuild.exe" -ArgumentList "/S", "/D=C:\mozilla-build" -Wait -NoNewWindow
+          Write-Host "MozillaBuild installation complete."
+
       - name: Build mozjs-24.2.0
         id: build-mozjs
         continue-on-error: true
         shell: cmd
         working-directory: third_party/mozjs-24.2.0
         run: |
+          :: 1. MSVC v120 환경 로드
           call "${{ steps.msvc.outputs.vcvarsall }}" x86
           if errorlevel 1 exit /b 1
 
-          if not exist build mkdir build
-          cd build
+          :: 2. MozillaBuild 경로를 PATH의 최우선으로 추가
+          set MOZILLABUILD=C:\mozilla-build
+          set PATH=%MOZILLABUILD%\msys\bin;%MOZILLABUILD%\python;%MOZILLABUILD%\msys\local\bin;%PATH%
+          set AUTOCONF=%MOZILLABUILD%\msys\local\bin\autoconf-2.13
 
-          cl /nologo /c /O2 /Z7 /GL /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
-            ..\adler32.c ..\compress.c ..\crc32.c ..\deflate.c ..\gzio.c ^
-            ..\infback.c ..\inffast.c ..\inflate.c ..\inftrees.c ..\trees.c ^
-            ..\uncompr.c ..\zutil.c
-          if errorlevel 1 exit /b 1
+          cd js\src
+          if not exist build_msvc mkdir build_msvc
+          cd build_msvc
 
-          lib /nologo /LTCG /MACHINE:X86 /OUT:zlib-1.2.1.lib *.obj
-          if errorlevel 1 exit /b 1
+          :: 3. MSVC 컴파일 플래그 설정 (하이픈 형식 사용)
+          set CC=cl.exe
+          set CXX=cl.exe
+          set AR=lib.exe
+          set CFLAGS=-nologo -O2 -Z7 -GL -DWIN32 -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_DEPRECATE
+          set CXXFLAGS=-nologo -O2 -Z7 -GL -EHsc -DWIN32 -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_DEPRECATE
+          set LDFLAGS=-LTCG -MACHINE:X86
 
-          copy /Y zlib-1.2.1.lib "%GITHUB_WORKSPACE%\build-output\" >nul
+          :: 4. configure 및 make 실행 (MozillaBuild의 bash 사용)
+          bash -c "../configure --enable-optimize --disable-debug"
+          if errorlevel 1 (
+              echo "Configure failed!"
+              exit /b 1
+          )
+
+          make
+          if errorlevel 1 (
+              echo "Make failed!"
+              exit /b 1
+          )
+
+          :: 5. 결과물 복사
+          copy /Y dist\lib\*.lib "%GITHUB_WORKSPACE%\build-output\" >nul
+          copy /Y *.lib "%GITHUB_WORKSPACE%\build-output\" >nul
 
       - name: Push mozjs-24.2.0 output
         if: always()
         shell: pwsh
         run: |
-          Get-ChildItem build-output\zlib-1.2.1.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
+          Get-ChildItem build-output\*.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
+          
       - uses: ./.github/actions/push-output
         if: always()
         with:
           label: "mozjs-24.2.0"
           paths: "out/*.lib"
-
+          
       - name: Summary
         if: always()
         shell: pwsh
