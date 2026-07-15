@@ -33,11 +33,6 @@ name: Build third_party libs (MSVC 12.0 / v120 toolset)
 # =============================================================================
 
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "third_party/**"
-      - ".github/workflows/build-msvc120-libs.yml"
   workflow_dispatch:
 
 env:
