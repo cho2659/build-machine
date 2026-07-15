@@ -148,6 +148,10 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+<<<<<<< HEAD
+          Get-ChildItem build-output\zlib-1.2.1.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
+      - uses: ./.github/actions/push-output
+=======
           # 이 job/라이브러리 전용 디렉토리(out/zlib-1.2.1/)만 다루므로
           # 다른 라이브러리의 out/<lib>/ 경로와 절대 겹치지 않는다.
           # 폴더 전체를 비우지 않고 이 라이브러리 파일만 갱신한다.
@@ -155,6 +159,7 @@ jobs:
             Copy-Item -Destination out/zlib-1.2.1 -Force
 
       - name: Push zlib-1.2.1 output
+>>>>>>> 0eefcc7d01510346b62e2b890eaa7883668e0847
         if: always()
         uses: ./.github/actions/push-output
         with:
@@ -238,16 +243,26 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+<<<<<<< HEAD
+          Get-ChildItem build-output\openjpeg-1.5.2.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
+      - uses: ./.github/actions/push-output
+=======
           Get-ChildItem build-output\openjpeg-1.5.2.lib -ErrorAction SilentlyContinue |
             Copy-Item -Destination out/openjpeg-1.5.2 -Force
 
       - name: Push openjpeg-1.5.2 output
+>>>>>>> 0eefcc7d01510346b62e2b890eaa7883668e0847
         if: always()
         uses: ./.github/actions/push-output
         with:
           label: "openjpeg-1.5.2"
           paths: "out/openjpeg-1.5.2/*.lib"
 
+<<<<<<< HEAD
+      # 1. tiff-v3.4 헤더 생성 스텝에 working-directory 추가
+      - name: Prepare tiff-v3.4 headers
+        working-directory: third_party/tiff-v3.4 # 이 줄을 반드시 추가하세요.
+=======
       - name: Upload openjpeg-1.5.2 artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -291,12 +306,8 @@ jobs:
         continue-on-error: true
         shell: pwsh
         working-directory: third_party/tiff-v3.4/libtiff
+>>>>>>> 0eefcc7d01510346b62e2b890eaa7883668e0847
         run: |
-          # u_long/u_short/u_char: tiff-v3.4는 1996년 BSD 코드라 이 타입들이
-          # <sys/types.h>에서 온다고 가정하지만, MSVC의 <sys/types.h>는 이를
-          # 정의하지 않아 tif_dir.h(39)에서 C2016/C2061로 구조체 정의가
-          # 깨진다. <winsock2.h>가 Windows에서 정확히 이 세 타입을 제공하므로
-          # 모든 tiff 소스에 /FI 로 강제 include한다.
           @"
           #ifndef WIN_BSD_TYPES_COMPAT_H
           #define WIN_BSD_TYPES_COMPAT_H
@@ -306,12 +317,9 @@ jobs:
           #include <winsock2.h>
           #endif /* WIN_BSD_TYPES_COMPAT_H */
           "@ | Set-Content -Path win_bsd_types_compat.h -Encoding ASCII
+          
+          '#define TIFFLIB_VERSION_STR "LIBTIFF, Version 3.4\nCopyright (c) 1988-2013 Sam Leffler\nCopyright (c) 1991-2013 Silicon Graphics, Inc."' | Set-Content -Path version.h -Encoding ASCII
 
-          # version.h: 원래 mkversion.exe가 빌드 전에 생성해야 하는데 이
-          # 소스 트리엔 그 도구가 없어 tif_version.c(26)에서 C1083이 난다.
-          # tif_version.c와 같은 폴더에 정적으로 직접 생성한다.
-          '#define TIFFLIB_VERSION_STR "LIBTIFF, Version 3.4\nCopyright (c) 1988-2013 Sam Leffler\nCopyright (c) 1991-2013 Silicon Graphics, Inc."' |
-            Set-Content -Path version.h -Encoding ASCII
 
       - name: Build tiff-v3.4
         id: build
@@ -346,10 +354,15 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+<<<<<<< HEAD
+          Get-ChildItem build-output\tiff-v3.4.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
+      - uses: ./.github/actions/push-output
+=======
           Get-ChildItem build-output\tiff-v3.4.lib -ErrorAction SilentlyContinue |
             Copy-Item -Destination out/tiff-v3.4 -Force
 
       - name: Push tiff-v3.4 output
+>>>>>>> 0eefcc7d01510346b62e2b890eaa7883668e0847
         if: always()
         uses: ./.github/actions/push-output
         with:
@@ -457,10 +470,15 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+<<<<<<< HEAD
+          Get-ChildItem build-output\freetype-2.4.2.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
+      - uses: ./.github/actions/push-output
+=======
           Get-ChildItem build-output\freetype-2.4.2.lib -ErrorAction SilentlyContinue |
             Copy-Item -Destination out/freetype-2.4.2 -Force
 
       - name: Push freetype-2.4.2 output
+>>>>>>> 0eefcc7d01510346b62e2b890eaa7883668e0847
         if: always()
         uses: ./.github/actions/push-output
         with:
@@ -563,10 +581,15 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+<<<<<<< HEAD
+          Get-ChildItem build-output\xpdf-3.01.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
+      - uses: ./.github/actions/push-output
+=======
           Get-ChildItem build-output\xpdf-3.01.lib -ErrorAction SilentlyContinue |
             Copy-Item -Destination out/xpdf-3.01 -Force
 
       - name: Push xpdf-3.01 output
+>>>>>>> 0eefcc7d01510346b62e2b890eaa7883668e0847
         if: always()
         uses: ./.github/actions/push-output
         with:
@@ -643,8 +666,11 @@ jobs:
         if: always()
         shell: pwsh
         run: |
+<<<<<<< HEAD
+=======
           # js-1.8.5는 configure 산출물이라 파일명이 고정돼 있지 않으므로,
           # 다른 5개 라이브러리 이름과 겹치는 것만 걸러내고 나머지를 담는다.
+>>>>>>> 0eefcc7d01510346b62e2b890eaa7883668e0847
           Get-ChildItem build-output\*.lib -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -notin @("zlib-1.2.1.lib","openjpeg-1.5.2.lib","tiff-v3.4.lib","freetype-2.4.2.lib","xpdf-3.01.lib") } |
             Copy-Item -Destination out/js-1.8.5 -Force
