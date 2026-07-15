@@ -10,14 +10,33 @@ name: Build third_party libs (MSVC 12.0 / v120 toolset)
 # 파일 구성:
 #   - MSVC v120 설치/복원  -> .github/actions/setup-msvc120/action.yml (별도)
 #   - git push (재시도)    -> .github/actions/push-output/action.yml   (별도)
-#   - 6개 라이브러리 빌드  -> 이 파일 하나에 통합 (단일 job, 순차 step)
+#   - 6개 라이브러리 빌드  -> 이 파일에서 "라이브러리당 별도 job"으로 병렬 실행
 #
-# 동작 방식:
-#   - 모든 라이브러리 빌드가 하나의 job 안에서 순서대로 실행된다.
+# 동작 방식 (v2 - job 분리):
+#   - 이전 버전은 하나의 job 안에서 6개 라이브러리를 순차 step으로 빌드하고,
+#     모두 같은 out/ 폴더를 재사용(Remove-Item out\* 로 비운 뒤 한 개만 채움)
+#     했다. 이 방식은 `git add -- out/*.lib` 가 "지금 out/ 에 없는, 그러나
+#     예전에 커밋된" 동일 glob 매치 파일까지 삭제로 스테이징해버리는 부작용이
+#     있었다 (git 2.x의 pathspec add는 삭제도 함께 스테이징한다). 그 결과
+#     zlib -> openjpeg -> ... 순서로 push할 때마다 직전 라이브러리가 repo에서
+#     지워지고, 마지막까지 살아남은 라이브러리(freetype)만 out/ 에 남았다.
+#   - v2에서는 이 문제를 구조적으로 제거한다:
+#       1) 라이브러리마다 완전히 별도의 job으로 분리한다 (병렬 실행, Actions
+#          UI에서도 각 라이브러리가 별도 항목으로 출력된다).
+#       2) 출력 경로도 라이브러리마다 전용 디렉토리를 쓴다
+#          (out/<lib>/<lib>.lib). 다른 라이브러리의 경로와 절대 겹치지 않으므로
+#          Remove-Item으로 폴더를 통째로 비울 필요도, git add가 다른
+#          라이브러리의 파일을 실수로 삭제로 스테이징할 위험도 없다.
+#       3) 빌드 결과는 (기존처럼) repo의 out/ 아래로 git push 하는 것에 더해,
+#          workflow artifact로도 별도 업로드한다. Actions 실행 화면에서
+#          라이브러리별로 바로 다운로드할 수 있다.
+#   - MSVC v120 툴체인은 provision job에서 한 번만 준비(복원 또는 최초 설치)
+#     하고, 이후 6개 build job은 그 결과물을 artifact로 내려받아 재사용한다
+#     (각 job이 별도 러너이므로 job.outputs 로 파일 경로를 못 넘기고, git
+#     push 완료 타이밍에 의존하면 checkout이 push 이전 SHA를 볼 수 있어
+#     artifact 방식이 더 안전하다).
 #   - 각 빌드 step은 continue-on-error: true 라 실패해도 job이 멈추지 않고
-#     바로 다음 라이브러리 빌드로 넘어간다 (스킵).
-#   - 각 빌드 step 직후 결과물이 있으면 바로 git push 한다 (build-output/ 이
-#     비어 있으면, 즉 실패했으면 push-output이 조용히 스킵).
+#     "빌드 실패"로 표시된 채 다음 단계(push/summary)로 넘어간다 (스킵).
 #
 # ⚠️ 캐비어트
 #   1) windows-2022 러너의 VS2022 설치 프로그램에는 "v120 (VS2013)" 개별
@@ -30,20 +49,16 @@ name: Build third_party libs (MSVC 12.0 / v120 toolset)
 #      MozillaBuild 툴체인이 2011년 소스와 100% 호환된다는 보장이 없어
 #      best-effort로 처리한다.
 #   3) tiff-v3.4의 u_long/u_short/u_char 미정의(C2016/C2061), version.h
-#      누락(C1083) 컴파일 실패는 아래 tiff step 안에서 직접 고친다.
+#      누락(C1083) 컴파일 실패는 tiff build job 안에서 직접 고친다.
 # =============================================================================
 
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "third_party/**"
-      - ".github/workflows/build-msvc120-libs.yml"
-      - ".github/actions/**"
   workflow_dispatch:
 
-# push하는 워크플로우이므로 같은 브랜치에서 여러 실행이 겹쳐 out/, tools/
-# 커밋이 서로 경쟁하지 않도록 순차 실행시킨다.
+# push하는 워크플로우이므로 같은 브랜치에서 여러 "실행(run)"이 겹쳐 out/,
+# tools/ 커밋이 서로 경쟁하지 않도록 workflow 단위로는 순차 실행시킨다.
+# (같은 run 안에서 build job들이 병렬로 도는 것은 이 concurrency와 무관하며,
+# 동시 push는 push-output action의 fetch+rebase 재시도로 처리한다.)
 concurrency:
   group: build-msvc120-libs-${{ github.ref }}
   cancel-in-progress: false
@@ -52,7 +67,11 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # ===========================================================================
+  # MSVC v120 툴체인을 한 번만 준비(복원 또는 최초 설치)하고, 6개 build job이
+  # 공유해 쓸 수 있도록 workflow artifact로 올려둔다.
+  # ===========================================================================
+  provision-toolchain:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -63,17 +82,47 @@ jobs:
         id: msvc
         uses: ./.github/actions/setup-msvc120
 
+      # setup-msvc120 action은 fast/slow path 어느 쪽이든 끝나고 나면
+      # tools/msvc120-x86.zip 이 워크스페이스에 존재하도록 보장한다.
+      - name: Upload toolchain artifact for build jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: msvc120-toolchain
+          path: tools/msvc120-x86.zip
+          retention-days: 1
+          if-no-files-found: error
+
+  # ===========================================================================
+  # zlib-1.2.1
+  # ===========================================================================
+  build-zlib:
+    needs: provision-toolchain
+    runs-on: windows-2022
+    outputs:
+      outcome: ${{ steps.build.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download shared MSVC toolchain artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: msvc120-toolchain
+          path: tools
+
+      - name: Restore MSVC 12.0 (v120) toolchain
+        id: msvc
+        uses: ./.github/actions/setup-msvc120
+
       - name: Prepare output dirs
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path build-output | Out-Null
-          New-Item -ItemType Directory -Force -Path out | Out-Null
+          New-Item -ItemType Directory -Force -Path out/zlib-1.2.1 | Out-Null
 
-      # ==========================================================================
-      # zlib-1.2.1
-      # ==========================================================================
       - name: Build zlib-1.2.1
-        id: build-zlib
+        id: build
         continue-on-error: true
         shell: cmd
         working-directory: third_party/zlib-1.2.1
@@ -95,21 +144,61 @@ jobs:
 
           copy /Y zlib-1.2.1.lib "%GITHUB_WORKSPACE%\build-output\" >nul
 
-      - name: Push zlib-1.2.1 output
+      - name: Stage zlib-1.2.1 output
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
-          Get-ChildItem build-output\zlib-1.2.1.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+          # 이 job/라이브러리 전용 디렉토리(out/zlib-1.2.1/)만 다루므로
+          # 다른 라이브러리의 out/<lib>/ 경로와 절대 겹치지 않는다.
+          # 폴더 전체를 비우지 않고 이 라이브러리 파일만 갱신한다.
+          Get-ChildItem build-output\zlib-1.2.1.lib -ErrorAction SilentlyContinue |
+            Copy-Item -Destination out/zlib-1.2.1 -Force
+
+      - name: Push zlib-1.2.1 output
         if: always()
+        uses: ./.github/actions/push-output
         with:
           label: "zlib-1.2.1"
-          paths: "out/*.lib"
+          paths: "out/zlib-1.2.1/*.lib"
 
-      # ==========================================================================
-      # openjpeg-version.1.5.2 (libopenjpeg)
-      # ==========================================================================
+      - name: Upload zlib-1.2.1 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-zlib-1.2.1
+          path: out/zlib-1.2.1/*.lib
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ===========================================================================
+  # openjpeg-version.1.5.2 (libopenjpeg)
+  # ===========================================================================
+  build-openjpeg:
+    needs: provision-toolchain
+    runs-on: windows-2022
+    outputs:
+      outcome: ${{ steps.build.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download shared MSVC toolchain artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: msvc120-toolchain
+          path: tools
+
+      - name: Restore MSVC 12.0 (v120) toolchain
+        id: msvc
+        uses: ./.github/actions/setup-msvc120
+
+      - name: Prepare output dirs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-output | Out-Null
+          New-Item -ItemType Directory -Force -Path out/openjpeg-1.5.2 | Out-Null
+
       - name: Generate opj_config.h
         continue-on-error: true
         shell: cmd
@@ -121,7 +210,7 @@ jobs:
           ) > opj_config.h
 
       - name: Build openjpeg-1.5.2
-        id: build-openjpeg
+        id: build
         continue-on-error: true
         shell: cmd
         working-directory: third_party/openjpeg-version.1.5.2/libopenjpeg
@@ -145,22 +234,59 @@ jobs:
 
           copy /Y openjpeg-1.5.2.lib "%GITHUB_WORKSPACE%\build-output\" >nul
 
-      - name: Push openjpeg-1.5.2 output
+      - name: Stage openjpeg-1.5.2 output
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
-          Get-ChildItem build-output\openjpeg-1.5.2.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+          Get-ChildItem build-output\openjpeg-1.5.2.lib -ErrorAction SilentlyContinue |
+            Copy-Item -Destination out/openjpeg-1.5.2 -Force
+
+      - name: Push openjpeg-1.5.2 output
         if: always()
+        uses: ./.github/actions/push-output
         with:
           label: "openjpeg-1.5.2"
-          paths: "out/*.lib"
+          paths: "out/openjpeg-1.5.2/*.lib"
 
-      # ==========================================================================
-      # tiff-v3.4 (libtiff)
-      # u_long/u_short/u_char 미정의(C2016/C2061), version.h 누락(C1083) 수정 포함
-      # ==========================================================================
+      - name: Upload openjpeg-1.5.2 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-openjpeg-1.5.2
+          path: out/openjpeg-1.5.2/*.lib
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ===========================================================================
+  # tiff-v3.4 (libtiff)
+  # u_long/u_short/u_char 미정의(C2016/C2061), version.h 누락(C1083) 수정 포함
+  # ===========================================================================
+  build-tiff:
+    needs: provision-toolchain
+    runs-on: windows-2022
+    outputs:
+      outcome: ${{ steps.build.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download shared MSVC toolchain artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: msvc120-toolchain
+          path: tools
+
+      - name: Restore MSVC 12.0 (v120) toolchain
+        id: msvc
+        uses: ./.github/actions/setup-msvc120
+
+      - name: Prepare output dirs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-output | Out-Null
+          New-Item -ItemType Directory -Force -Path out/tiff-v3.4 | Out-Null
+
       - name: Fix tiff-v3.4 - generate BSD-type compat header & version.h
         continue-on-error: true
         shell: pwsh
@@ -188,7 +314,7 @@ jobs:
             Set-Content -Path version.h -Encoding ASCII
 
       - name: Build tiff-v3.4
-        id: build-tiff
+        id: build
         continue-on-error: true
         shell: cmd
         working-directory: third_party/tiff-v3.4/libtiff
@@ -216,23 +342,60 @@ jobs:
 
           copy /Y tiff-v3.4.lib "%GITHUB_WORKSPACE%\build-output\" >nul
 
-      - name: Push tiff-v3.4 output
+      - name: Stage tiff-v3.4 output
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
-          Get-ChildItem build-output\tiff-v3.4.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+          Get-ChildItem build-output\tiff-v3.4.lib -ErrorAction SilentlyContinue |
+            Copy-Item -Destination out/tiff-v3.4 -Force
+
+      - name: Push tiff-v3.4 output
         if: always()
+        uses: ./.github/actions/push-output
         with:
           label: "tiff-v3.4"
-          paths: "out/*.lib"
+          paths: "out/tiff-v3.4/*.lib"
 
-      # ==========================================================================
-      # freetype-2.4.2 (공식 single-object 파일 목록 사용)
-      # ==========================================================================
+      - name: Upload tiff-v3.4 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-tiff-v3.4
+          path: out/tiff-v3.4/*.lib
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ===========================================================================
+  # freetype-2.4.2 (공식 single-object 파일 목록 사용)
+  # ===========================================================================
+  build-freetype:
+    needs: provision-toolchain
+    runs-on: windows-2022
+    outputs:
+      outcome: ${{ steps.build.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download shared MSVC toolchain artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: msvc120-toolchain
+          path: tools
+
+      - name: Restore MSVC 12.0 (v120) toolchain
+        id: msvc
+        uses: ./.github/actions/setup-msvc120
+
+      - name: Prepare output dirs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-output | Out-Null
+          New-Item -ItemType Directory -Force -Path out/freetype-2.4.2 | Out-Null
+
       - name: Build freetype-2.4.2
-        id: build-freetype
+        id: build
         continue-on-error: true
         shell: cmd
         working-directory: third_party/freetype-2.4.2
@@ -290,21 +453,58 @@ jobs:
 
           copy /Y freetype-2.4.2.lib "%GITHUB_WORKSPACE%\build-output\" >nul
 
-      - name: Push freetype-2.4.2 output
+      - name: Stage freetype-2.4.2 output
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
-          Get-ChildItem build-output\freetype-2.4.2.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+          Get-ChildItem build-output\freetype-2.4.2.lib -ErrorAction SilentlyContinue |
+            Copy-Item -Destination out/freetype-2.4.2 -Force
+
+      - name: Push freetype-2.4.2 output
         if: always()
+        uses: ./.github/actions/push-output
         with:
           label: "freetype-2.4.2"
-          paths: "out/*.lib"
+          paths: "out/freetype-2.4.2/*.lib"
 
-      # ==========================================================================
-      # xpdf-3.01 (goo + fofi + splash + xpdf 코어, 실행파일 소스 제외)
-      # ==========================================================================
+      - name: Upload freetype-2.4.2 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-freetype-2.4.2
+          path: out/freetype-2.4.2/*.lib
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ===========================================================================
+  # xpdf-3.01 (goo + fofi + splash + xpdf 코어, 실행파일 소스 제외)
+  # ===========================================================================
+  build-xpdf:
+    needs: provision-toolchain
+    runs-on: windows-2022
+    outputs:
+      outcome: ${{ steps.build.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download shared MSVC toolchain artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: msvc120-toolchain
+          path: tools
+
+      - name: Restore MSVC 12.0 (v120) toolchain
+        id: msvc
+        uses: ./.github/actions/setup-msvc120
+
+      - name: Prepare output dirs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-output | Out-Null
+          New-Item -ItemType Directory -Force -Path out/xpdf-3.01 | Out-Null
+
       - name: Prepare xpdf win32 config
         continue-on-error: true
         shell: cmd
@@ -312,7 +512,7 @@ jobs:
         run: copy /Y aconf-win32.h aconf.h
 
       - name: Build xpdf-3.01
-        id: build-xpdf
+        id: build
         continue-on-error: true
         shell: cmd
         working-directory: third_party/xpdf-3.01
@@ -351,7 +551,7 @@ jobs:
             ..\xpdf\PDFDoc.cc ..\xpdf\PDFDocEncoding.cc ..\xpdf\PSTokenizer.cc ^
             ..\xpdf\SecurityHandler.cc ..\xpdf\Stream.cc ..\xpdf\TextOutputDev.cc ^
             ..\xpdf\UnicodeMap.cc ..\xpdf\UnicodeTypeTable.cc ..\xpdf\XRef.cc ^
-            ..\xpdf\XpdfPluginAPI.cc ..\xpdf\PageLabelInfo.cc ..\xpdf\PSOutputDev.cc
+            ..\xpdf\XpdfPluginAPI.cc ..\xpdf\PSOutputDev.cc
           if errorlevel 1 exit /b 1
 
           lib /nologo /LTCG /MACHINE:X86 /OUT:xpdf-3.01.lib *.obj
@@ -359,21 +559,58 @@ jobs:
 
           copy /Y xpdf-3.01.lib "%GITHUB_WORKSPACE%\build-output\" >nul
 
-      - name: Push xpdf-3.01 output
+      - name: Stage xpdf-3.01 output
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
-          Get-ChildItem build-output\xpdf-3.01.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+          Get-ChildItem build-output\xpdf-3.01.lib -ErrorAction SilentlyContinue |
+            Copy-Item -Destination out/xpdf-3.01 -Force
+
+      - name: Push xpdf-3.01 output
         if: always()
+        uses: ./.github/actions/push-output
         with:
           label: "xpdf-3.01"
-          paths: "out/*.lib"
+          paths: "out/xpdf-3.01/*.lib"
 
-      # ==========================================================================
-      # js-1.8.5 (SpiderMonkey) - configure 기반, best effort
-      # ==========================================================================
+      - name: Upload xpdf-3.01 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-xpdf-3.01
+          path: out/xpdf-3.01/*.lib
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ===========================================================================
+  # js-1.8.5 (SpiderMonkey) - configure 기반, best effort
+  # ===========================================================================
+  build-js185:
+    needs: provision-toolchain
+    runs-on: windows-2022
+    outputs:
+      outcome: ${{ steps.build.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download shared MSVC toolchain artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: msvc120-toolchain
+          path: tools
+
+      - name: Restore MSVC 12.0 (v120) toolchain
+        id: msvc
+        uses: ./.github/actions/setup-msvc120
+
+      - name: Prepare output dirs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build-output | Out-Null
+          New-Item -ItemType Directory -Force -Path out/js-1.8.5 | Out-Null
+
       - name: Install MozillaBuild
         continue-on-error: true
         shell: pwsh
@@ -383,7 +620,7 @@ jobs:
           Start-Process -FilePath $exePath -ArgumentList "/S" -Wait
 
       - name: Build js-1.8.5 (best effort)
-        id: build-js185
+        id: build
         continue-on-error: true
         shell: cmd
         working-directory: third_party/js-1.8.5/js/src
@@ -402,40 +639,65 @@ jobs:
 
           for /r %%f in (*.lib) do copy /Y "%%f" "%GITHUB_WORKSPACE%\build-output\" >nul
 
-      - name: Push js-1.8.5 output
+      - name: Stage js-1.8.5 output
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
+          # js-1.8.5는 configure 산출물이라 파일명이 고정돼 있지 않으므로,
+          # 다른 5개 라이브러리 이름과 겹치는 것만 걸러내고 나머지를 담는다.
           Get-ChildItem build-output\*.lib -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -notin @("zlib-1.2.1.lib","openjpeg-1.5.2.lib","tiff-v3.4.lib","freetype-2.4.2.lib","xpdf-3.01.lib") } |
-            Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+            Copy-Item -Destination out/js-1.8.5 -Force
+
+      - name: Push js-1.8.5 output
         if: always()
+        uses: ./.github/actions/push-output
         with:
           label: "js-1.8.5"
-          paths: "out/*.lib"
+          paths: "out/js-1.8.5/*.lib"
 
-      # ==========================================================================
-      # 요약: 어떤 라이브러리가 실패했는지 로그로 남긴다 (job 자체는 계속 성공
-      # 처리 - 실패한 빌드는 스킵하고 넘어가는 것이 요구사항이라 job을 굳이
-      # 실패 처리하지 않는다. 실패 여부를 CI에서 강제로 보고 싶다면 이 step의
-      # `run: exit 1`을 켜면 된다).
-      # ==========================================================================
-      - name: Summary
+      - name: Upload js-1.8.5 artifact
         if: always()
-        shell: pwsh
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-js-1.8.5
+          path: out/js-1.8.5/*.lib
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ===========================================================================
+  # 요약: 어떤 라이브러리가 실패했는지 로그로 남긴다 (job 자체는 계속 성공
+  # 처리 - 실패한 빌드는 스킵하고 넘어가는 것이 요구사항이라 build job을
+  # 굳이 실패 처리하지 않는다. 대신 각 build job이 outputs.outcome 으로
+  # 실제 빌드 step의 성공/실패를 전달하고, 여기서 한곳에 모아 보여준다).
+  # ===========================================================================
+  summary:
+    needs:
+      - build-zlib
+      - build-openjpeg
+      - build-tiff
+      - build-freetype
+      - build-xpdf
+      - build-js185
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print per-library build results
+        shell: bash
         run: |
-          $results = @{
-            "zlib-1.2.1"      = "${{ steps.build-zlib.outcome }}"
-            "openjpeg-1.5.2"  = "${{ steps.build-openjpeg.outcome }}"
-            "tiff-v3.4"       = "${{ steps.build-tiff.outcome }}"
-            "freetype-2.4.2"  = "${{ steps.build-freetype.outcome }}"
-            "xpdf-3.01"       = "${{ steps.build-xpdf.outcome }}"
-            "js-1.8.5"        = "${{ steps.build-js185.outcome }}"
-          }
-          foreach ($k in $results.Keys) {
-            $v = $results[$k]
-            if ($v -eq "success") { Write-Host "[OK]   $k" }
-            else { Write-Host "::warning::[SKIP] $k ($v) - see its build step log above" }
-          }
+          declare -A results=(
+            ["zlib-1.2.1"]="${{ needs.build-zlib.outputs.outcome }}"
+            ["openjpeg-1.5.2"]="${{ needs.build-openjpeg.outputs.outcome }}"
+            ["tiff-v3.4"]="${{ needs.build-tiff.outputs.outcome }}"
+            ["freetype-2.4.2"]="${{ needs.build-freetype.outputs.outcome }}"
+            ["xpdf-3.01"]="${{ needs.build-xpdf.outputs.outcome }}"
+            ["js-1.8.5"]="${{ needs.build-js185.outputs.outcome }}"
+          )
+          for k in "${!results[@]}"; do
+            v="${results[$k]}"
+            if [ "$v" = "success" ]; then
+              echo "[OK]   $k"
+            else
+              echo "::warning::[SKIP] $k ($v) - see its build job log above"
+            fi
+          done
