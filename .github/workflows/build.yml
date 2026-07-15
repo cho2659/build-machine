@@ -1,14 +1,5 @@
 name: Build third_party libs (MSVC 12.0 / v120 toolset)
 
-# =============================================================================
-# third_party 내 6개 라이브러리를 MSVC 12.0 (Visual Studio 2013, v120 toolset)으로
-# 빌드해 .lib 로 산출한다.
-#
-# 💡 [해결책] Chocolatey를 통한 구형 VS2013 전체 설치 대신, 호스팅 러너에 
-#    이미 설치된 VS 2022 Enterprise Installer를 통해 MSVC v120 빌드 도구 구성 요소만
-#    빠르게 추가 설치하여 빌드 환경을 구축합니다.
-# =============================================================================
-
 on:
   push:
     branches: [ "main" ]
@@ -18,7 +9,7 @@ on:
   workflow_dispatch:
 
 env:
-  # VS 2022 내부의 v120(VS 2013)용 vcvarsall.bat 경로 지정
+  # windows-2022 러너의 VS 2022 Enterprise 내부 v120용 vcvarsall.bat 경로 지정
   VCVARSALL: C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat
   CFLAGS_COMMON: /nologo /c /O2 /Zi /GL /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE"
   LIBFLAGS_COMMON: /nologo /LTCG /MACHINE:X86
@@ -28,7 +19,8 @@ jobs:
   # 1) zlib / openjpeg / tiff / freetype / xpdf 빌드
   # ---------------------------------------------------------------------------
   build-libs:
-    runs-on: windows-latest
+    # ⚠️ 중요: VS2026이 내장된 windows-latest 대신, 안정적인 VS2022 전용 러너로 변경합니다.
+    runs-on: windows-2022
     defaults:
       run:
         shell: cmd
@@ -37,8 +29,7 @@ jobs:
         uses: actions/checkout@v4
 
       # -------------------------------------------------------------------
-      # 절대 경로를 사용하여 VS Installer를 직접 실행합니다.
-      # component id: Microsoft.VisualStudio.Component.VC.120
+      # VS 2022 인스톨러를 정확한 설치 경로로 호출하여 v120(VS 2013) C++ 툴셋 추가
       # -------------------------------------------------------------------
       - name: Install MSVC v120 (VS2013) Toolset via VS Installer
         run: |
@@ -50,7 +41,7 @@ jobs:
           if errorlevel 1 (
             echo [WARNING] VS Installer finished with non-zero exit code. Proceeding to verification...
           )
-          
+
       - name: Verify VS2013 (v120) toolset is available
         run: |
           if not exist "%VCVARSALL%" (
@@ -246,7 +237,7 @@ jobs:
   # 2) js-1.8.5 (SpiderMonkey) 빌드
   # ---------------------------------------------------------------------------
   build-js185-spidermonkey:
-    runs-on: windows-latest
+    runs-on: windows-2022
     needs: build-libs
     defaults:
       run:
@@ -255,10 +246,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # -------------------------------------------------------------------
-      # 절대 경로를 사용하여 VS Installer를 직접 실행합니다.
-      # component id: Microsoft.VisualStudio.Component.VC.120
-      # -------------------------------------------------------------------
       - name: Install MSVC v120 (VS2013) Toolset via VS Installer
         run: |
           echo "Installing MSVC v120 toolset..."
@@ -269,7 +256,6 @@ jobs:
           if errorlevel 1 (
             echo [WARNING] VS Installer finished with non-zero exit code. Proceeding to verification...
           )
-
 
       - name: Verify VS2013 toolset is available
         run: |
