@@ -1,8 +1,6 @@
 name: Build Third-Party Libraries
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch: # 수동 실행 기능하도록 설정
 
 jobs:
