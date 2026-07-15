@@ -275,7 +275,7 @@ jobs:
   #    않을 수 있어 실패 가능성이 높다는 점을 감안한다.
   # ---------------------------------------------------------------------------
   build-js185-spidermonkey:
-    runs-on: windows-2019
+    runs-on: windows-latest
     needs: build-libs
     defaults:
       run:
