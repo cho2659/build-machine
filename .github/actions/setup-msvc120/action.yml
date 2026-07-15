@@ -14,8 +14,23 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Cache VS2013 ISO download (slow path에서만 사용)
-      if: hashFiles('tools/msvc120-x86.zip') == ''
+    # 설치가 끝난 VC 서브트리 자체를 캐싱한다. key를 고정값으로 둬서(파일
+    # 해시에 의존하지 않음) repo push/checkout 타이밍과 무관하게 항상
+    # 히트를 노린다. tools/msvc120-x86.zip을 repo에 push하는 방식은
+    # "다음 push 트리거"에는 잘 맞지만, actions/checkout이 기본적으로
+    # 워크플로우를 "트리거한 시점의 커밋"을 체크아웃하기 때문에 직전 실행이
+    # 방금 push한 커밋을 아직 못 보는 경우(같은 시점 근처에 여러 실행이
+    # 몰릴 때, concurrency 대기열 등)가 있다. actions/cache는 그 타이밍과
+    # 무관하게 즉시 복원되므로 이 문제를 구조적으로 해결한다.
+    - name: Cache installed v120 toolchain (VC subtree)
+      id: cache-vc
+      uses: actions/cache@v4
+      with:
+        path: C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC
+        key: msvc120-vc-subtree-v1
+
+    - name: Cache VS2013 ISO download (VC 캐시도 못 맞고 repo push도 없을 때만 사용)
+      if: steps.cache-vc.outputs.cache-hit != 'true' && hashFiles('tools/msvc120-x86.zip') == ''
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}\vs2013.iso
@@ -40,6 +55,12 @@ runs:
             Write-Host "vcvarsall.bat ready at $VcVarsAll"
             "vcvarsall=$VcVarsAll" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
             "VCVARSALL=$VcVarsAll" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        }
+
+        if (Test-Path $VcVarsAll) {
+            Write-Host "actions/cache already restored the installed VC subtree - reusing it (no install needed)."
+            Export-VcVarsAll
+            exit 0
         }
 
         if (Test-Path $RepoZip) {
