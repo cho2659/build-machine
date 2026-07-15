@@ -46,7 +46,7 @@ jobs:
   #    5개 라이브러리를 하나의 잡에서 순서대로 빌드한다.
   # ---------------------------------------------------------------------------
   build-libs:
-    runs-on: windows-2019
+    runs-on: windows-latest
     defaults:
       run:
         shell: cmd
