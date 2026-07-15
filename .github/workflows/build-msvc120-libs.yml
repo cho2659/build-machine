@@ -9,7 +9,7 @@ name: Build third_party libs (MSVC 12.0 / v120 toolset)
 #
 # 파일 구성:
 #   - MSVC v120 설치/복원  -> .github/actions/setup-msvc120/action.yml (별도)
-#   - git push (재시도)    -> .github/actions/push-output/action.yml   (별도)
+#   - git push (재시도)    -> .github/workflows/out/action.yml   (별도)
 #   - 6개 라이브러리 빌드  -> 이 파일 하나에 통합 (단일 job, 순차 step)
 #
 # 동작 방식:
@@ -34,12 +34,6 @@ name: Build third_party libs (MSVC 12.0 / v120 toolset)
 # =============================================================================
 
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "third_party/**"
-      - ".github/workflows/build-msvc120-libs.yml"
-      - ".github/actions/**"
   workflow_dispatch:
 
 # push하는 워크플로우이므로 같은 브랜치에서 여러 실행이 겹쳐 out/, tools/
@@ -61,7 +55,7 @@ jobs:
 
       - name: Provision (or restore) MSVC 12.0 (v120) toolchain
         id: msvc
-        uses: ./.github/actions/setup-msvc120
+        uses: ./.github/workflows/setup
 
       - name: Prepare output dirs
         shell: pwsh
@@ -101,7 +95,7 @@ jobs:
         run: |
           Remove-Item out\* -ErrorAction SilentlyContinue
           Get-ChildItem build-output\zlib-1.2.1.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+      - uses: ./.github/workflows/out
         if: always()
         with:
           label: "zlib-1.2.1"
@@ -151,7 +145,7 @@ jobs:
         run: |
           Remove-Item out\* -ErrorAction SilentlyContinue
           Get-ChildItem build-output\openjpeg-1.5.2.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+      - uses: ./.github/workflows/out
         if: always()
         with:
           label: "openjpeg-1.5.2"
@@ -222,7 +216,7 @@ jobs:
         run: |
           Remove-Item out\* -ErrorAction SilentlyContinue
           Get-ChildItem build-output\tiff-v3.4.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+      - uses: ./.github/workflows/out
         if: always()
         with:
           label: "tiff-v3.4"
@@ -296,7 +290,7 @@ jobs:
         run: |
           Remove-Item out\* -ErrorAction SilentlyContinue
           Get-ChildItem build-output\freetype-2.4.2.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+      - uses: ./.github/workflows/out
         if: always()
         with:
           label: "freetype-2.4.2"
@@ -365,7 +359,7 @@ jobs:
         run: |
           Remove-Item out\* -ErrorAction SilentlyContinue
           Get-ChildItem build-output\xpdf-3.01.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+      - uses: ./.github/workflows/out
         if: always()
         with:
           label: "xpdf-3.01"
@@ -410,7 +404,7 @@ jobs:
           Get-ChildItem build-output\*.lib -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -notin @("zlib-1.2.1.lib","openjpeg-1.5.2.lib","tiff-v3.4.lib","freetype-2.4.2.lib","xpdf-3.01.lib") } |
             Copy-Item -Destination out -Force
-      - uses: ./.github/actions/push-output
+      - uses: ./.github/workflows/out
         if: always()
         with:
           label: "js-1.8.5"
