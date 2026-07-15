@@ -18,42 +18,38 @@ jobs:
       - name: Create third-party directory
         run: mkdir -p third_party
 
-      # 3. [선택 사항] 캐싱 적용 (빌드 시간 단축의 핵심)
-      # 세 번째 파티 폴더 내용물과 다운로드한 압축파일들을 캐싱합니다.
-
-      # 4. 다운로드 및 압축 해제 단계 (캐시가 없을 때만 실행)
+      # 3. 다운로드 및 압축 해제 단계
       - name: Download and Extract Third-Party Sources
         run: |
           cd third_party
           
+          # [!] 핵심 개선: -O 옵션으로 파일명을 정확하게 고정하여 저장합니다.
           echo "=== 1. zlib ==="
-          wget -q https://github.com/madler/zlib/archive/refs/tags/v1.2.1.tar.gz
-          tar -xzf "zlib-1.2.1.tar.gz"
-          rm "zlib-1.2.1.tar.gz" # 용량 확보를 위해 압축파일 제거
+          wget -q https://github.com/madler/zlib/archive/refs/tags/v1.2.1.tar.gz -O zlib-1.2.1.tar.gz
+          tar -xzf zlib-1.2.1.tar.gz
+          rm zlib-1.2.1.tar.gz
 
           echo "=== 2. openjpeg ==="
-          wget -q https://github.com/uclouvain/openjpeg/archive/refs/tags/version.1.5.2.tar.gz
-          tar -xzf "openjpeg-version.1.5.2.tar.gz"
-          rm "openjpeg-version.1.5.2.tar.gz"
+          wget -q https://github.com/uclouvain/openjpeg/archive/refs/tags/version.1.5.2.tar.gz -O openjpeg-version.1.5.2.tar.gz
+          tar -xzf openjpeg-version.1.5.2.tar.gz
+          rm openjpeg-version.1.5.2.tar.gz
 
           echo "=== 3. spider monkey ==="
-          wget -q https://archive.mozilla.org/pub/js/js185-1.0.0.tar.gz
-          tar -xzf "js185-1.0.0.tar.gz"
-          rm "js185-1.0.0.tar.gz"
+          wget -q https://archive.mozilla.org/pub/js/js185-1.0.0.tar.gz -O js185-1.0.0.tar.gz
+          tar -xzf js185-1.0.0.tar.gz
+          rm js185-1.0.0.tar.gz
 
           echo "=== 4. libtiff ==="
-          wget -q https://download.osgeo.org/libtiff/old/tiff-v3.4-tar.gz
-          tar -xzf "tiff-v3.4-tar.gz"
-          rm "tiff-v3.4-tar.gz"
+          wget -q https://download.osgeo.org/libtiff/old/tiff-v3.4-tar.gz -O tiff-v3.4-tar.gz
+          tar -xzf tiff-v3.4-tar.gz
+          rm tiff-v3.4-tar.gz
 
           echo "=== 5. freetype ==="
           curl -L "https://sourceforge.net/projects/freetype/files/freetype2/2.4.2/freetype-2.4.2.tar.gz/download" -o freetype-2.4.2.tar.gz
-          tar -xzf "freetype-2.4.2.tar.gz"
-          rm "freetype-2.4.2.tar.gz"
+          tar -xzf freetype-2.4.2.tar.gz
+          rm freetype-2.4.2.tar.gz
 
           echo "=== 6. xpdf ==="
-          wget -q https://dl.xpdfreader.com/old/xpdf-3.01.tar.gz
-          tar -xzf "xpdf-3.01.tar.gz"
-          rm "xpdf-3.01.tar.gz"
-          
-          
+          wget -q https://dl.xpdfreader.com/old/xpdf-3.01.tar.gz -O xpdf-3.01.tar.gz
+          tar -xzf xpdf-3.01.tar.gz
+          rm xpdf-3.01.tar.gz
