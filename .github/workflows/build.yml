@@ -1,0 +1,344 @@
+name: Build third_party libs (MSVC 12.0 / v120 toolset)
+
+# =============================================================================
+# third_party 내 6개 라이브러리를 MSVC 12.0 (Visual Studio 2013 Update 5,
+# v120 toolset)으로 빌드해 .lib 로 산출한다.
+#
+#   컴파일 : cl /c /O2 /Zi /GL /D "WIN32" ...
+#   보관   : lib /LTCG /MACHINE:X86 /OUT:xxx.lib *.obj
+#
+#   (참고) 사용자가 요청한 "/O2 /DEBUG /Zi /GL /link /MACHINE:x86 /D "WIN32" /LTCG"
+#   에서 /DEBUG, /MACHINE:x86 은 링커(link.exe/lib.exe) 옵션이고 /O2 /Zi /GL /D
+#   는 컴파일러(cl.exe) 옵션이라 아래처럼 두 단계(cl -> lib)로 나눠 적용했다.
+#   /Zi 로 생성된 디버그 정보는 lib 단계에서 .lib 안에 그대로 보관된다.
+#
+# ⚠️ 중요 캐비어트
+#   1) GitHub 호스팅 windows-2019 러너에는 VS2013(v120)이 기본 설치되어 있지
+#      않다. 아래에서는 Chocolatey visualstudio2013professional 패키지로
+#      설치를 "시도"하지만, 이 패키지는 Microsoft의 VS2013 공식 배포 지점을
+#      그대로 참조하고 있고 해당 다운로드 링크가 만료/차단된 상태일 수 있어
+#      실패할 위험이 있다. 실패 시 가장 확실한 대안은 VS2013이 이미 설치된
+#      self-hosted 러너를 쓰는 것이다 (runs-on: [self-hosted, windows, vs2013]).
+#   2) js-1.8.5 (SpiderMonkey)는 다른 5개와 달리 단순 "cl로 *.c 모두 컴파일"
+#      구조가 아니라 configure 스크립트가 jsautocfg.h 등을 생성해야 하는
+#      autotools 기반 빌드다. MozillaBuild 툴체인으로 시도하지만 이 저장소는
+#      2011년 당시의 구성 스크립트를 담고 있어 현재 MozillaBuild와 100%
+#      호환된다는 보장이 없다. 실패하면 로그를 보고 개별 조정이 필요하다.
+# =============================================================================
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "third_party/**"
+      - ".github/workflows/build-msvc120-libs.yml"
+  workflow_dispatch:
+
+env:
+  VS2013_DIR: C:\Program Files (x86)\Microsoft Visual Studio 12.0
+  VCVARSALL: C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\vcvarsall.bat
+  CFLAGS_COMMON: /nologo /c /O2 /Zi /GL /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE"
+  LIBFLAGS_COMMON: /nologo /LTCG /MACHINE:X86
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) zlib / openjpeg / tiff / freetype / xpdf : cl.exe 직접 컴파일이 가능한
+  #    5개 라이브러리를 하나의 잡에서 순서대로 빌드한다.
+  # ---------------------------------------------------------------------------
+  build-libs:
+    runs-on: windows-2019
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------
+      # MSVC 12.0 (VS2013 Update 5) 설치 시도
+      # 실패해도 워크플로우를 죽이지 않고 이후 단계에서 vcvarsall 존재
+      # 여부로 즉시 알 수 있도록 continue-on-error 로 감싼다.
+      # -------------------------------------------------------------------
+      - name: Install MSVC 12.0 (VS2013 Update 5) via Chocolatey
+        continue-on-error: true
+        run: |
+          choco install visualstudio2013professional -y --no-progress --timeout 3600
+
+      - name: Verify VS2013 toolset is available
+        run: |
+          if not exist "%VCVARSALL%" (
+            echo [FATAL] "%VCVARSALL%" not found.
+            echo VS2013 ^(v120 toolset^) install failed or was not performed.
+            echo Use a self-hosted runner with VS2013 pre-installed instead.
+            exit /b 1
+          )
+          echo Found vcvarsall.bat at "%VCVARSALL%"
+
+      # -------------------------------------------------------------------
+      # zlib 1.2.1
+      # -------------------------------------------------------------------
+      - name: Build zlib-1.2.1
+        working-directory: third_party/zlib-1.2.1
+        run: |
+          call "%VCVARSALL%" x86
+          if not exist build mkdir build
+          cd build
+          cl %CFLAGS_COMMON% ^
+            ..\adler32.c ..\compress.c ..\crc32.c ..\deflate.c ..\gzio.c ^
+            ..\infback.c ..\inffast.c ..\inflate.c ..\inftrees.c ..\trees.c ^
+            ..\uncompr.c ..\zutil.c
+          if errorlevel 1 exit /b 1
+          lib %LIBFLAGS_COMMON% /OUT:zlib-1.2.1.lib *.obj
+          if errorlevel 1 exit /b 1
+
+      # -------------------------------------------------------------------
+      # openjpeg-version.1.5.2  (libopenjpeg)
+      # opj_config.h 는 원래 CMake 가 opj_config.h.cmake.in 에서 생성하는데,
+      # 여기서는 CMake 없이 openjpeg.c 가 요구하는 최소 형태로 직접 만든다.
+      # -------------------------------------------------------------------
+      - name: Generate opj_config.h
+        working-directory: third_party/openjpeg-version.1.5.2/libopenjpeg
+        run: |
+          (
+            echo /* generated for MSVC 12.0 build - no CMake available */
+            echo #define PACKAGE_VERSION "1.5.2"
+          ) > opj_config.h
+
+      - name: Build openjpeg-version.1.5.2
+        working-directory: third_party/openjpeg-version.1.5.2/libopenjpeg
+        run: |
+          call "%VCVARSALL%" x86
+          if not exist build mkdir build
+          cd build
+          cl %CFLAGS_COMMON% /I.. ^
+            ..\bio.c ..\cidx_manager.c ..\cio.c ..\dwt.c ..\event.c ^
+            ..\image.c ..\j2k.c ..\j2k_lib.c ..\jp2.c ..\jpt.c ..\mct.c ^
+            ..\mqc.c ..\openjpeg.c ..\phix_manager.c ..\pi.c ^
+            ..\ppix_manager.c ..\raw.c ..\t1.c ..\t2.c ..\tcd.c ..\tgt.c ^
+            ..\thix_manager.c ..\tpix_manager.c
+          if errorlevel 1 exit /b 1
+          lib %LIBFLAGS_COMMON% /OUT:openjpeg-1.5.2.lib *.obj
+          if errorlevel 1 exit /b 1
+
+      # -------------------------------------------------------------------
+      # tiff-v3.4  (libtiff)
+      # 이 버전은 tif_config.h 방식이 아니라 자체 tiffconf.h 를 내장하고
+      # 있어 별도 config 생성이 필요 없다. mk*.c(코드 생성 도구)와
+      # 다른 OS 전용 파일(tif_acorn/apple/atari/msdos/unix/vms/win3),
+      # 그리고 third_party 에 libjpeg 소스가 없어 tif_jpeg.c 는 제외한다.
+      # tif_zip.c / tif_pixarlog.c 는 zlib 헤더가 필요해 include 경로를 추가한다.
+      # -------------------------------------------------------------------
+      - name: Build tiff-v3.4
+        working-directory: third_party/tiff-v3.4/libtiff
+        run: |
+          call "%VCVARSALL%" x86
+          if not exist build mkdir build
+          cd build
+          cl %CFLAGS_COMMON% /I.. /I..\..\..\zlib-1.2.1 ^
+            ..\tif_aux.c ..\tif_close.c ..\tif_codec.c ..\tif_compress.c ^
+            ..\tif_dir.c ..\tif_dirinfo.c ..\tif_dirread.c ..\tif_dirwrite.c ^
+            ..\tif_dumpmode.c ..\tif_error.c ..\tif_fax3.c ..\tif_flush.c ^
+            ..\tif_getimage.c ..\tif_lzw.c ..\tif_next.c ..\tif_open.c ^
+            ..\tif_packbits.c ..\tif_pixarlog.c ..\tif_predict.c ..\tif_print.c ^
+            ..\tif_read.c ..\tif_strip.c ..\tif_swab.c ..\tif_thunder.c ^
+            ..\tif_tile.c ..\tif_version.c ..\tif_warning.c ..\tif_win32.c ^
+            ..\tif_write.c ..\tif_zip.c
+          if errorlevel 1 exit /b 1
+          lib %LIBFLAGS_COMMON% /OUT:tiff-v3.4.lib *.obj
+          if errorlevel 1 exit /b 1
+
+      # -------------------------------------------------------------------
+      # freetype-2.4.2
+      # builds/win32/visualc/freetype.dsp 에 명시된 공식 "single object"
+      # 파일 목록을 그대로 사용한다 (각 모듈의 대표 .c 가 나머지를 #include).
+      # FT2_BUILD_LIBRARY 정의 필요, ftdebug.c 는 src/base 가 아니라
+      # builds/win32 버전을 사용해야 한다.
+      # -------------------------------------------------------------------
+      - name: Build freetype-2.4.2
+        working-directory: third_party/freetype-2.4.2
+        run: |
+          call "%VCVARSALL%" x86
+          if not exist build mkdir build
+          cd build
+          cl %CFLAGS_COMMON% /D "FT2_BUILD_LIBRARY" ^
+            /I..\include /I..\builds\win32 ^
+            ..\src\autofit\autofit.c ^
+            ..\src\bdf\bdf.c ^
+            ..\src\cff\cff.c ^
+            ..\src\base\ftbase.c ^
+            ..\src\base\ftbbox.c ^
+            ..\src\base\ftbdf.c ^
+            ..\src\base\ftbitmap.c ^
+            ..\src\base\ftfstype.c ^
+            ..\src\base\ftgasp.c ^
+            ..\src\cache\ftcache.c ^
+            ..\builds\win32\ftdebug.c ^
+            ..\src\base\ftglyph.c ^
+            ..\src\base\ftgxval.c ^
+            ..\src\gzip\ftgzip.c ^
+            ..\src\base\ftinit.c ^
+            ..\src\lzw\ftlzw.c ^
+            ..\src\base\ftmm.c ^
+            ..\src\base\ftotval.c ^
+            ..\src\base\ftpfr.c ^
+            ..\src\base\ftstroke.c ^
+            ..\src\base\ftsynth.c ^
+            ..\src\base\ftsystem.c ^
+            ..\src\base\fttype1.c ^
+            ..\src\base\ftwinfnt.c ^
+            ..\src\base\ftxf86.c ^
+            ..\src\pcf\pcf.c ^
+            ..\src\pfr\pfr.c ^
+            ..\src\psaux\psaux.c ^
+            ..\src\pshinter\pshinter.c ^
+            ..\src\psnames\psmodule.c ^
+            ..\src\raster\raster.c ^
+            ..\src\sfnt\sfnt.c ^
+            ..\src\smooth\smooth.c ^
+            ..\src\truetype\truetype.c ^
+            ..\src\type1\type1.c ^
+            ..\src\cid\type1cid.c ^
+            ..\src\type42\type42.c ^
+            ..\src\winfonts\winfnt.c
+          if errorlevel 1 exit /b 1
+          lib %LIBFLAGS_COMMON% /OUT:freetype-2.4.2.lib *.obj
+          if errorlevel 1 exit /b 1
+
+      # -------------------------------------------------------------------
+      # xpdf-3.01  (goo + fofi + splash, xpdf/*.cc 는 실행파일 소스라 제외)
+      # aconf-win32.h 를 aconf.h 로 복사해야 <aconf.h> 인클루드가 해석된다.
+      # splash/SplashFT*.cc 가 freetype 공개 헤더를 필요로 한다.
+      # -------------------------------------------------------------------
+      - name: Prepare xpdf win32 config
+        working-directory: third_party/xpdf-3.01
+        run: |
+          copy /Y aconf-win32.h aconf.h
+
+      - name: Build xpdf-3.01
+        working-directory: third_party/xpdf-3.01
+        run: |
+          call "%VCVARSALL%" x86
+          if not exist build mkdir build
+          cd build
+          cl %CFLAGS_COMMON% ^
+            /I.. /I..\goo /I..\fofi /I..\splash /I..\xpdf ^
+            /I..\..\freetype-2.4.2\include ^
+            ..\goo\FixedPoint.cc ..\goo\GHash.cc ..\goo\GList.cc ^
+            ..\goo\GString.cc ..\goo\gfile.cc ..\goo\gmem.c ..\goo\gmempp.cc ^
+            ..\goo\parseargs.c ^
+            ..\fofi\FoFiBase.cc ..\fofi\FoFiEncodings.cc ..\fofi\FoFiTrueType.cc ^
+            ..\fofi\FoFiType1.cc ..\fofi\FoFiType1C.cc ^
+            ..\splash\Splash.cc ..\splash\SplashBitmap.cc ..\splash\SplashClip.cc ^
+            ..\splash\SplashFTFont.cc ..\splash\SplashFTFontEngine.cc ^
+            ..\splash\SplashFTFontFile.cc ..\splash\SplashFont.cc ^
+            ..\splash\SplashFontEngine.cc ..\splash\SplashFontFile.cc ^
+            ..\splash\SplashFontFileID.cc ..\splash\SplashPath.cc ^
+            ..\splash\SplashPattern.cc ..\splash\SplashScreen.cc ^
+            ..\splash\SplashState.cc ..\splash\SplashT1Font.cc ^
+            ..\splash\SplashT1FontEngine.cc ..\splash\SplashT1FontFile.cc ^
+            ..\splash\SplashXPath.cc ..\splash\SplashXPathScanner.cc ^
+            ..\xpdf\Annot.cc ..\xpdf\Array.cc ..\xpdf\BuiltinFont.cc ^
+            ..\xpdf\BuiltinFontTables.cc ..\xpdf\Catalog.cc ..\xpdf\CharCodeToUnicode.cc ^
+            ..\xpdf\CMap.cc ..\xpdf\Decrypt.cc ..\xpdf\Dict.cc ..\xpdf\Error.cc ^
+            ..\xpdf\FontEncodingTables.cc ..\xpdf\Function.cc ..\xpdf\Gfx.cc ^
+            ..\xpdf\GfxFont.cc ..\xpdf\GfxState.cc ..\xpdf\GlobalParams.cc ^
+            ..\xpdf\JArithmeticDecoder.cc ..\xpdf\JBIG2Stream.cc ..\xpdf\Lexer.cc ^
+            ..\xpdf\Link.cc ..\xpdf\NameToCharCode.cc ..\xpdf\Object.cc ^
+            ..\xpdf\OutputDev.cc ..\xpdf\Page.cc ..\xpdf\Parser.cc ^
+            ..\xpdf\PDFDoc.cc ..\xpdf\PDFDocEncoding.cc ..\xpdf\PSTokenizer.cc ^
+            ..\xpdf\SecurityHandler.cc ..\xpdf\Stream.cc ..\xpdf\TextOutputDev.cc ^
+            ..\xpdf\UnicodeMap.cc ..\xpdf\UnicodeTypeTable.cc ..\xpdf\XRef.cc ^
+            ..\xpdf\XpdfPluginAPI.cc ..\xpdf\PageLabelInfo.cc ..\xpdf\PSOutputDev.cc
+          if errorlevel 1 exit /b 1
+          lib %LIBFLAGS_COMMON% /OUT:xpdf-3.01.lib *.obj
+          if errorlevel 1 exit /b 1
+
+      - name: Collect .lib artifacts
+        run: |
+          if not exist artifacts mkdir artifacts
+          copy /Y third_party\zlib-1.2.1\build\zlib-1.2.1.lib artifacts\
+          copy /Y third_party\openjpeg-version.1.5.2\libopenjpeg\build\openjpeg-1.5.2.lib artifacts\
+          copy /Y third_party\tiff-v3.4\libtiff\build\tiff-v3.4.lib artifacts\
+          copy /Y third_party\freetype-2.4.2\build\freetype-2.4.2.lib artifacts\
+          copy /Y third_party\xpdf-3.01\build\xpdf-3.01.lib artifacts\
+
+      - name: Upload .lib artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: third-party-libs-msvc120-x86
+          path: artifacts/*.lib
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 2) js-1.8.5 (SpiderMonkey) : configure 기반 빌드라 별도 잡으로 분리.
+  #    MozillaBuild 로 시도하지만 2011년 소스가 현재 툴체인과 완전히 맞지
+  #    않을 수 있어 실패 가능성이 높다는 점을 감안한다.
+  # ---------------------------------------------------------------------------
+  build-js185-spidermonkey:
+    runs-on: windows-2019
+    needs: build-libs
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install MSVC 12.0 (VS2013 Update 5) via Chocolatey
+        continue-on-error: true
+        run: |
+          choco install visualstudio2013professional -y --no-progress --timeout 3600
+
+      - name: Verify VS2013 toolset is available
+        run: |
+          if not exist "%VCVARSALL%" (
+            echo [FATAL] "%VCVARSALL%" not found. See build-libs job notes.
+            exit /b 1
+          )
+
+      # MozillaBuild 는 SpiderMonkey 1.8.5 를 Windows 에서 빌드할 때
+      # 표준적으로 요구되는 MSYS 유사 셸/Perl/Python 묶음이다.
+      - name: Install MozillaBuild
+        continue-on-error: true
+        run: |
+          choco install mozillabuild -y --no-progress
+
+      - name: Verify MozillaBuild is available
+        id: check_mozillabuild
+        run: |
+          if not exist "C:\mozilla-build\start-shell.bat" (
+            echo [WARN] MozillaBuild not found - js-1.8.5 build will be skipped.
+            echo skip=true>> %GITHUB_OUTPUT%
+          ) else (
+            echo skip=false>> %GITHUB_OUTPUT%
+          )
+
+      # configure && make 는 MozillaBuild 의 MSYS 셸 안에서 실행해야 하고,
+      # 그 안에서 VS2013 의 cl.exe 를 PATH 에 넣기 위해 vcvarsall 결과를
+      # 환경변수로 넘겨준다. 이 저장소의 js-1.8.5 소스가 최신 MozillaBuild와
+      # 100% 호환된다는 보장이 없으므로, 실패 시 로그를 보고 config/*.mk 나
+      # configure.in 쪽을 개별적으로 손봐야 할 수 있다.
+      - name: Configure & build SpiderMonkey (best effort)
+        if: steps.check_mozillabuild.outputs.skip != 'true'
+        working-directory: third_party/js-1.8.5/js/src
+        continue-on-error: true
+        run: |
+          call "%VCVARSALL%" x86
+          set MOZ_TOOLS=C:\mozilla-build
+          "C:\mozilla-build\start-shell.bat" -c "cd js/src && ./configure --enable-optimize --disable-debug --target=i686-pc-mingw32 --with-macos-sdk=no && make"
+
+      - name: Archive SpiderMonkey static lib (if produced)
+        if: steps.check_mozillabuild.outputs.skip != 'true'
+        continue-on-error: true
+        run: |
+          if not exist artifacts mkdir artifacts
+          for /r third_party\js-1.8.5\js\src %%f in (*.lib) do copy /Y "%%f" artifacts\ 2>nul
+          echo Done (best effort - check artifacts\ for a produced js185.lib)
+
+      - name: Upload SpiderMonkey artifact (if any)
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: js185-spidermonkey-msvc120-x86
+          path: artifacts/*.lib
+          if-no-files-found: warn
