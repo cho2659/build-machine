@@ -99,7 +99,6 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
           Get-ChildItem build-output\zlib-1.2.1.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
       - uses: ./.github/actions/push-output
         if: always()
@@ -149,7 +148,6 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
           Get-ChildItem build-output\openjpeg-1.5.2.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
       - uses: ./.github/actions/push-output
         if: always()
@@ -164,7 +162,7 @@ jobs:
       - name: Fix tiff-v3.4 - generate BSD-type compat header & version.h
         continue-on-error: true
         shell: pwsh
-        working-directory: third_party/tiff-v3.4/libtiff
+        working-directory: third_party/tiff-v3.4
         run: |
           # u_long/u_short/u_char: tiff-v3.4는 1996년 BSD 코드라 이 타입들이
           # <sys/types.h>에서 온다고 가정하지만, MSVC의 <sys/types.h>는 이를
@@ -220,7 +218,6 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
           Get-ChildItem build-output\tiff-v3.4.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
       - uses: ./.github/actions/push-output
         if: always()
@@ -294,7 +291,6 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
           Get-ChildItem build-output\freetype-2.4.2.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
       - uses: ./.github/actions/push-output
         if: always()
@@ -351,7 +347,7 @@ jobs:
             ..\xpdf\PDFDoc.cc ..\xpdf\PDFDocEncoding.cc ..\xpdf\PSTokenizer.cc ^
             ..\xpdf\SecurityHandler.cc ..\xpdf\Stream.cc ..\xpdf\TextOutputDev.cc ^
             ..\xpdf\UnicodeMap.cc ..\xpdf\UnicodeTypeTable.cc ..\xpdf\XRef.cc ^
-            ..\xpdf\XpdfPluginAPI.cc ..\xpdf\PageLabelInfo.cc ..\xpdf\PSOutputDev.cc
+            ..\xpdf\XpdfPluginAPI.cc ..\xpdf\PSOutputDev.cc
           if errorlevel 1 exit /b 1
 
           lib /nologo /LTCG /MACHINE:X86 /OUT:xpdf-3.01.lib *.obj
@@ -363,7 +359,6 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
           Get-ChildItem build-output\xpdf-3.01.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
       - uses: ./.github/actions/push-output
         if: always()
@@ -406,7 +401,6 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Remove-Item out\* -ErrorAction SilentlyContinue
           Get-ChildItem build-output\*.lib -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -notin @("zlib-1.2.1.lib","openjpeg-1.5.2.lib","tiff-v3.4.lib","freetype-2.4.2.lib","xpdf-3.01.lib") } |
             Copy-Item -Destination out -Force
