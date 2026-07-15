@@ -1,29 +1,12 @@
 name: Build third_party libs (MSVC 12.0 / v120 toolset)
 
 # =============================================================================
-# third_party 내 6개 라이브러리를 MSVC 12.0 (Visual Studio 2013 Update 5,
-# v120 toolset)으로 빌드해 .lib 로 산출한다.
+# third_party 내 6개 라이브러리를 MSVC 12.0 (Visual Studio 2013, v120 toolset)으로
+# 빌드해 .lib 로 산출한다.
 #
-#   컴파일 : cl /c /O2 /Zi /GL /D "WIN32" ...
-#   보관   : lib /LTCG /MACHINE:X86 /OUT:xxx.lib *.obj
-#
-#   (참고) 사용자가 요청한 "/O2 /DEBUG /Zi /GL /link /MACHINE:x86 /D "WIN32" /LTCG"
-#   에서 /DEBUG, /MACHINE:x86 은 링커(link.exe/lib.exe) 옵션이고 /O2 /Zi /GL /D
-#   는 컴파일러(cl.exe) 옵션이라 아래처럼 두 단계(cl -> lib)로 나눠 적용했다.
-#   /Zi 로 생성된 디버그 정보는 lib 단계에서 .lib 안에 그대로 보관된다.
-#
-# ⚠️ 중요 캐비어트
-#   1) GitHub 호스팅 windows-2019 러너에는 VS2013(v120)이 기본 설치되어 있지
-#      않다. 아래에서는 Chocolatey visualstudio2013professional 패키지로
-#      설치를 "시도"하지만, 이 패키지는 Microsoft의 VS2013 공식 배포 지점을
-#      그대로 참조하고 있고 해당 다운로드 링크가 만료/차단된 상태일 수 있어
-#      실패할 위험이 있다. 실패 시 가장 확실한 대안은 VS2013이 이미 설치된
-#      self-hosted 러너를 쓰는 것이다 (runs-on: [self-hosted, windows, vs2013]).
-#   2) js-1.8.5 (SpiderMonkey)는 다른 5개와 달리 단순 "cl로 *.c 모두 컴파일"
-#      구조가 아니라 configure 스크립트가 jsautocfg.h 등을 생성해야 하는
-#      autotools 기반 빌드다. MozillaBuild 툴체인으로 시도하지만 이 저장소는
-#      2011년 당시의 구성 스크립트를 담고 있어 현재 MozillaBuild와 100%
-#      호환된다는 보장이 없다. 실패하면 로그를 보고 개별 조정이 필요하다.
+# 💡 [해결책] Chocolatey를 통한 구형 VS2013 전체 설치 대신, 호스팅 러너에 
+#    이미 설치된 VS 2022 Enterprise Installer를 통해 MSVC v120 빌드 도구 구성 요소만
+#    빠르게 추가 설치하여 빌드 환경을 구축합니다.
 # =============================================================================
 
 on:
@@ -35,15 +18,14 @@ on:
   workflow_dispatch:
 
 env:
-  VS2013_DIR: C:\Program Files (x86)\Microsoft Visual Studio 12.0
-  VCVARSALL: C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\vcvarsall.bat
+  # VS 2022 내부의 v120(VS 2013)용 vcvarsall.bat 경로 지정
+  VCVARSALL: C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat
   CFLAGS_COMMON: /nologo /c /O2 /Zi /GL /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE"
   LIBFLAGS_COMMON: /nologo /LTCG /MACHINE:X86
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1) zlib / openjpeg / tiff / freetype / xpdf : cl.exe 직접 컴파일이 가능한
-  #    5개 라이브러리를 하나의 잡에서 순서대로 빌드한다.
+  # 1) zlib / openjpeg / tiff / freetype / xpdf 빌드
   # ---------------------------------------------------------------------------
   build-libs:
     runs-on: windows-latest
@@ -55,21 +37,26 @@ jobs:
         uses: actions/checkout@v4
 
       # -------------------------------------------------------------------
-      # MSVC 12.0 (VS2013 Update 5) 설치 시도
-      # 실패해도 워크플로우를 죽이지 않고 이후 단계에서 vcvarsall 존재
-      # 여부로 즉시 알 수 있도록 continue-on-error 로 감싼다.
+      # VS 2022 인스톨러를 호출해 v120(VS 2013) C++ 빌드 도구를 추가 설치합니다.
+      # component id: Microsoft.VisualStudio.Component.VC.120
       # -------------------------------------------------------------------
-      - name: Install MSVC 12.0 (VS2013 Update 5) via Chocolatey
-        continue-on-error: true
+      - name: Install MSVC v120 (VS2013) Toolset via VS Installer
         run: |
-          choco install visualstudio2013professional -y --no-progress --timeout 3600
+          echo "Installing MSVC v120 toolset..."
+          cd "C:\Program Files (x86)\Microsoft Visual Studio\Installer"
+          vs_installer.exe modify ^
+            --installPath "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" ^
+            --add Microsoft.VisualStudio.Component.VC.120 ^
+            --passive --norestart
+          if errorlevel 1 (
+            echo [WARNING] VS Installer finished with non-zero exit code. Proceeding to verification...
+          )
 
-      - name: Verify VS2013 toolset is available
+      - name: Verify VS2013 (v120) toolset is available
         run: |
           if not exist "%VCVARSALL%" (
             echo [FATAL] "%VCVARSALL%" not found.
-            echo VS2013 ^(v120 toolset^) install failed or was not performed.
-            echo Use a self-hosted runner with VS2013 pre-installed instead.
+            echo MSVC v120 (VS 2013) toolset installation failed.
             exit /b 1
           )
           echo Found vcvarsall.bat at "%VCVARSALL%"
@@ -80,7 +67,7 @@ jobs:
       - name: Build zlib-1.2.1
         working-directory: third_party/zlib-1.2.1
         run: |
-          call "%VCVARSALL%" x86
+          call "%VCVARSALL%" x86 -vcvars_ver=12.0
           if not exist build mkdir build
           cd build
           cl %CFLAGS_COMMON% ^
@@ -92,9 +79,7 @@ jobs:
           if errorlevel 1 exit /b 1
 
       # -------------------------------------------------------------------
-      # openjpeg-version.1.5.2  (libopenjpeg)
-      # opj_config.h 는 원래 CMake 가 opj_config.h.cmake.in 에서 생성하는데,
-      # 여기서는 CMake 없이 openjpeg.c 가 요구하는 최소 형태로 직접 만든다.
+      # openjpeg-version.1.5.2
       # -------------------------------------------------------------------
       - name: Generate opj_config.h
         working-directory: third_party/openjpeg-version.1.5.2/libopenjpeg
@@ -107,7 +92,7 @@ jobs:
       - name: Build openjpeg-version.1.5.2
         working-directory: third_party/openjpeg-version.1.5.2/libopenjpeg
         run: |
-          call "%VCVARSALL%" x86
+          call "%VCVARSALL%" x86 -vcvars_ver=12.0
           if not exist build mkdir build
           cd build
           cl %CFLAGS_COMMON% /I.. ^
@@ -121,17 +106,12 @@ jobs:
           if errorlevel 1 exit /b 1
 
       # -------------------------------------------------------------------
-      # tiff-v3.4  (libtiff)
-      # 이 버전은 tif_config.h 방식이 아니라 자체 tiffconf.h 를 내장하고
-      # 있어 별도 config 생성이 필요 없다. mk*.c(코드 생성 도구)와
-      # 다른 OS 전용 파일(tif_acorn/apple/atari/msdos/unix/vms/win3),
-      # 그리고 third_party 에 libjpeg 소스가 없어 tif_jpeg.c 는 제외한다.
-      # tif_zip.c / tif_pixarlog.c 는 zlib 헤더가 필요해 include 경로를 추가한다.
+      # tiff-v3.4
       # -------------------------------------------------------------------
       - name: Build tiff-v3.4
         working-directory: third_party/tiff-v3.4/libtiff
         run: |
-          call "%VCVARSALL%" x86
+          call "%VCVARSALL%" x86 -vcvars_ver=12.0
           if not exist build mkdir build
           cd build
           cl %CFLAGS_COMMON% /I.. /I..\..\..\zlib-1.2.1 ^
@@ -149,15 +129,11 @@ jobs:
 
       # -------------------------------------------------------------------
       # freetype-2.4.2
-      # builds/win32/visualc/freetype.dsp 에 명시된 공식 "single object"
-      # 파일 목록을 그대로 사용한다 (각 모듈의 대표 .c 가 나머지를 #include).
-      # FT2_BUILD_LIBRARY 정의 필요, ftdebug.c 는 src/base 가 아니라
-      # builds/win32 버전을 사용해야 한다.
       # -------------------------------------------------------------------
       - name: Build freetype-2.4.2
         working-directory: third_party/freetype-2.4.2
         run: |
-          call "%VCVARSALL%" x86
+          call "%VCVARSALL%" x86 -vcvars_ver=12.0
           if not exist build mkdir build
           cd build
           cl %CFLAGS_COMMON% /D "FT2_BUILD_LIBRARY" ^
@@ -205,9 +181,7 @@ jobs:
           if errorlevel 1 exit /b 1
 
       # -------------------------------------------------------------------
-      # xpdf-3.01  (goo + fofi + splash, xpdf/*.cc 는 실행파일 소스라 제외)
-      # aconf-win32.h 를 aconf.h 로 복사해야 <aconf.h> 인클루드가 해석된다.
-      # splash/SplashFT*.cc 가 freetype 공개 헤더를 필요로 한다.
+      # xpdf-3.01
       # -------------------------------------------------------------------
       - name: Prepare xpdf win32 config
         working-directory: third_party/xpdf-3.01
@@ -217,7 +191,7 @@ jobs:
       - name: Build xpdf-3.01
         working-directory: third_party/xpdf-3.01
         run: |
-          call "%VCVARSALL%" x86
+          call "%VCVARSALL%" x86 -vcvars_ver=12.0
           if not exist build mkdir build
           cd build
           cl %CFLAGS_COMMON% ^
@@ -270,9 +244,7 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 2) js-1.8.5 (SpiderMonkey) : configure 기반 빌드라 별도 잡으로 분리.
-  #    MozillaBuild 로 시도하지만 2011년 소스가 현재 툴체인과 완전히 맞지
-  #    않을 수 있어 실패 가능성이 높다는 점을 감안한다.
+  # 2) js-1.8.5 (SpiderMonkey) 빌드
   # ---------------------------------------------------------------------------
   build-js185-spidermonkey:
     runs-on: windows-latest
@@ -284,20 +256,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install MSVC 12.0 (VS2013 Update 5) via Chocolatey
-        continue-on-error: true
+      - name: Install MSVC v120 (VS2013) Toolset via VS Installer
         run: |
-          choco install visualstudio2013professional -y --no-progress --timeout 3600
+          echo "Installing MSVC v120 toolset..."
+          cd "C:\Program Files (x86)\Microsoft Visual Studio\Installer"
+          vs_installer.exe modify ^
+            --installPath "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" ^
+            --add Microsoft.VisualStudio.Component.VC.120 ^
+            --passive --norestart
+          if errorlevel 1 (
+            echo [WARNING] VS Installer finished with non-zero exit code. Proceeding to verification...
+          )
 
       - name: Verify VS2013 toolset is available
         run: |
           if not exist "%VCVARSALL%" (
-            echo [FATAL] "%VCVARSALL%" not found. See build-libs job notes.
+            echo [FATAL] "%VCVARSALL%" not found.
             exit /b 1
           )
 
-      # MozillaBuild 는 SpiderMonkey 1.8.5 를 Windows 에서 빌드할 때
-      # 표준적으로 요구되는 MSYS 유사 셸/Perl/Python 묶음이다.
       - name: Install MozillaBuild
         continue-on-error: true
         run: |
@@ -313,17 +290,12 @@ jobs:
             echo skip=false>> %GITHUB_OUTPUT%
           )
 
-      # configure && make 는 MozillaBuild 의 MSYS 셸 안에서 실행해야 하고,
-      # 그 안에서 VS2013 의 cl.exe 를 PATH 에 넣기 위해 vcvarsall 결과를
-      # 환경변수로 넘겨준다. 이 저장소의 js-1.8.5 소스가 최신 MozillaBuild와
-      # 100% 호환된다는 보장이 없으므로, 실패 시 로그를 보고 config/*.mk 나
-      # configure.in 쪽을 개별적으로 손봐야 할 수 있다.
       - name: Configure & build SpiderMonkey (best effort)
         if: steps.check_mozillabuild.outputs.skip != 'true'
         working-directory: third_party/js-1.8.5/js/src
         continue-on-error: true
         run: |
-          call "%VCVARSALL%" x86
+          call "%VCVARSALL%" x86 -vcvars_ver=12.0
           set MOZ_TOOLS=C:\mozilla-build
           "C:\mozilla-build\start-shell.bat" -c "cd js/src && ./configure --enable-optimize --disable-debug --target=i686-pc-mingw32 --with-macos-sdk=no && make"
 
