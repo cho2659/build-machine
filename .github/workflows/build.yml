@@ -1,5 +1,37 @@
 name: Build third_party libs (MSVC 12.0 / v120 toolset)
 
+# =============================================================================
+# third_party 내 6개 라이브러리를 MSVC 12.0 (Visual Studio 2013 Update 5,
+# v120 toolset)으로 빌드해 .lib 로 산출한다.
+#
+#   컴파일 : cl /c /O2 /Zi /GL /D "WIN32" ...
+#   보관   : lib /LTCG /MACHINE:X86 /OUT:xxx.lib *.obj
+#
+#   (참고) 사용자가 요청한 "/O2 /DEBUG /Zi /GL /link /MACHINE:x86 /D "WIN32" /LTCG"
+#   에서 /DEBUG, /MACHINE:x86 은 링커(link.exe/lib.exe) 옵션이고 /O2 /Zi /GL /D
+#   는 컴파일러(cl.exe) 옵션이라 아래처럼 두 단계(cl -> lib)로 나눠 적용했다.
+#   /Zi 로 생성된 디버그 정보는 lib 단계에서 .lib 안에 그대로 보관된다.
+#
+# ⚠️ 중요 캐비어트
+#   1) windows-2022 러너에 이미 깔린 VS2022(최신 MSVC)의 설치 프로그램에는
+#      "v120 (VS2013)" 개별 구성 요소 자체가 존재하지 않는다 (VS2017부터
+#      Microsoft가 side-by-side 레거시 툴셋 옵션을 v140까지만 남기고 v120/v110은
+#      제거했다 - 참고: github.com/actions/runner-images#7390). 즉 "VS2022를
+#      modify 해서 v120만 추가"하는 방법은 존재하지 않는다.
+#      대신 사용자가 지정한 VS2013 Update 5 Desktop Express ISO를 직접
+#      다운로드해 그 안의 wdexpress_full.exe 를 조용히 설치해서 진짜 v120
+#      cl.exe를 확보한다 (Chocolatey 미사용).
+#        ISO: http://download.microsoft.com/download/2/E/E/2EEC68E6-7B03-437A-AF06-F8E43F04014D/vs2013.5_dskexp_ENU.iso
+#      Desktop Express 에디션은 x86 네이티브 C/C++ 컴파일러(v120)를 포함하므로
+#      /MACHINE:X86 정적 라이브러리 빌드에는 문제가 없다.
+#   2) js-1.8.5 (SpiderMonkey)는 다른 5개와 달리 단순 "cl로 *.c 모두 컴파일"
+#      구조가 아니라 configure 스크립트가 jsautocfg.h 등을 생성해야 하는
+#      autotools 기반 빌드다. MozillaBuild 툴체인(Chocolatey 대신 Mozilla 공식
+#      ftp.mozilla.org 직접 다운로드)으로 시도하지만, 이 저장소는 2011년 당시의
+#      구성 스크립트를 담고 있어 현재 MozillaBuild와 100% 호환된다는 보장이
+#      없다. 실패하면 로그를 보고 개별 조정이 필요하다.
+# =============================================================================
+
 on:
   push:
     branches: [ "main" ]
@@ -9,17 +41,18 @@ on:
   workflow_dispatch:
 
 env:
-  # windows-2022 러너의 VS 2022 Enterprise 내부 v120용 vcvarsall.bat 경로 지정
-  VCVARSALL: C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat
+  VS2013_ISO_URL: "http://download.microsoft.com/download/2/E/E/2EEC68E6-7B03-437A-AF06-F8E43F04014D/vs2013.5_dskexp_ENU.iso"
+  VS2013_DIR: C:\Program Files (x86)\Microsoft Visual Studio 12.0
+  VCVARSALL: C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\vcvarsall.bat
   CFLAGS_COMMON: /nologo /c /O2 /Zi /GL /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE"
   LIBFLAGS_COMMON: /nologo /LTCG /MACHINE:X86
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1) zlib / openjpeg / tiff / freetype / xpdf 빌드
+  # 1) zlib / openjpeg / tiff / freetype / xpdf : cl.exe 직접 컴파일이 가능한
+  #    5개 라이브러리를 하나의 잡에서 순서대로 빌드한다.
   # ---------------------------------------------------------------------------
   build-libs:
-    # ⚠️ 중요: VS2026이 내장된 windows-latest 대신, 안정적인 VS2022 전용 러너로 변경합니다.
     runs-on: windows-2022
     defaults:
       run:
@@ -29,24 +62,47 @@ jobs:
         uses: actions/checkout@v4
 
       # -------------------------------------------------------------------
-      # VS 2022 인스톨러를 정확한 설치 경로로 호출하여 v120(VS 2013) C++ 툴셋 추가
+      # MSVC 12.0 (VS2013 Update 5, v120) 설치
+      # windows-2022 러너에 이미 있는 VS2022는 v120 컴포넌트를 제공하지
+      # 않으므로(위 헤더 주석 참고), 지정된 VS2013 Desktop Express ISO를
+      # 직접 받아 조용히 설치한다. Chocolatey는 사용하지 않는다.
       # -------------------------------------------------------------------
-      - name: Install MSVC v120 (VS2013) Toolset via VS Installer
+      - name: Download VS2013 Update 5 (Desktop Express) ISO
+        shell: pwsh
         run: |
-          echo "Installing MSVC v120 toolset..."
-          "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" modify ^
-            --installPath "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" ^
-            --add Microsoft.VisualStudio.Component.VC.120 ^
-            --passive --norestart
-          if errorlevel 1 (
-            echo [WARNING] VS Installer finished with non-zero exit code. Proceeding to verification...
-          )
+          $isoPath = "$env:RUNNER_TEMP\vs2013.iso"
+          Write-Host "Downloading $env:VS2013_ISO_URL"
+          Invoke-WebRequest -Uri $env:VS2013_ISO_URL -OutFile $isoPath -UseBasicParsing
+          $sizeMB = [Math]::Round((Get-Item $isoPath).Length / 1MB, 1)
+          Write-Host "Downloaded $isoPath ($sizeMB MB)"
 
-      - name: Verify VS2013 (v120) toolset is available
+      - name: Install VS2013 Desktop Express (v120 toolset) from ISO
+        shell: pwsh
+        run: |
+          $isoPath = "$env:RUNNER_TEMP\vs2013.iso"
+          $logPath = "$env:RUNNER_TEMP\vs2013_install.log"
+          $mount = Mount-DiskImage -ImagePath $isoPath -PassThru
+          $driveLetter = ($mount | Get-Volume).DriveLetter
+          $setupExe = "${driveLetter}:\wdexpress_full.exe"
+          Write-Host "Mounted ISO at ${driveLetter}: - running $setupExe (silent)"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "/Q", "/NoRestart", "/Log", $logPath `
+            -Wait -PassThru
+          Write-Host "Installer exit code: $($proc.ExitCode)"
+          Dismount-DiskImage -ImagePath $isoPath
+          # 0 = success, 3010 = success but reboot pending (files are already
+          # laid down, so we can proceed without rebooting the runner).
+          if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
+            Write-Host "::error::VS2013 installer failed with exit code $($proc.ExitCode)"
+            Get-Content $logPath -ErrorAction SilentlyContinue | Select-Object -Last 200
+            exit 1
+          }
+
+      - name: Verify VS2013 toolset is available
         run: |
           if not exist "%VCVARSALL%" (
-            echo [FATAL] "%VCVARSALL%" not found.
-            echo MSVC v120 (VS 2013) toolset installation failed.
+            echo [FATAL] "%VCVARSALL%" not found after ISO install.
+            echo Check the "Install VS2013 ... from ISO" step log above.
             exit /b 1
           )
           echo Found vcvarsall.bat at "%VCVARSALL%"
@@ -57,7 +113,7 @@ jobs:
       - name: Build zlib-1.2.1
         working-directory: third_party/zlib-1.2.1
         run: |
-          call "%VCVARSALL%" x86 -vcvars_ver=12.0
+          call "%VCVARSALL%" x86
           if not exist build mkdir build
           cd build
           cl %CFLAGS_COMMON% ^
@@ -69,7 +125,9 @@ jobs:
           if errorlevel 1 exit /b 1
 
       # -------------------------------------------------------------------
-      # openjpeg-version.1.5.2
+      # openjpeg-version.1.5.2  (libopenjpeg)
+      # opj_config.h 는 원래 CMake 가 opj_config.h.cmake.in 에서 생성하는데,
+      # 여기서는 CMake 없이 openjpeg.c 가 요구하는 최소 형태로 직접 만든다.
       # -------------------------------------------------------------------
       - name: Generate opj_config.h
         working-directory: third_party/openjpeg-version.1.5.2/libopenjpeg
@@ -82,7 +140,7 @@ jobs:
       - name: Build openjpeg-version.1.5.2
         working-directory: third_party/openjpeg-version.1.5.2/libopenjpeg
         run: |
-          call "%VCVARSALL%" x86 -vcvars_ver=12.0
+          call "%VCVARSALL%" x86
           if not exist build mkdir build
           cd build
           cl %CFLAGS_COMMON% /I.. ^
@@ -96,12 +154,17 @@ jobs:
           if errorlevel 1 exit /b 1
 
       # -------------------------------------------------------------------
-      # tiff-v3.4
+      # tiff-v3.4  (libtiff)
+      # 이 버전은 tif_config.h 방식이 아니라 자체 tiffconf.h 를 내장하고
+      # 있어 별도 config 생성이 필요 없다. mk*.c(코드 생성 도구)와
+      # 다른 OS 전용 파일(tif_acorn/apple/atari/msdos/unix/vms/win3),
+      # 그리고 third_party 에 libjpeg 소스가 없어 tif_jpeg.c 는 제외한다.
+      # tif_zip.c / tif_pixarlog.c 는 zlib 헤더가 필요해 include 경로를 추가한다.
       # -------------------------------------------------------------------
       - name: Build tiff-v3.4
         working-directory: third_party/tiff-v3.4/libtiff
         run: |
-          call "%VCVARSALL%" x86 -vcvars_ver=12.0
+          call "%VCVARSALL%" x86
           if not exist build mkdir build
           cd build
           cl %CFLAGS_COMMON% /I.. /I..\..\..\zlib-1.2.1 ^
@@ -119,11 +182,15 @@ jobs:
 
       # -------------------------------------------------------------------
       # freetype-2.4.2
+      # builds/win32/visualc/freetype.dsp 에 명시된 공식 "single object"
+      # 파일 목록을 그대로 사용한다 (각 모듈의 대표 .c 가 나머지를 #include).
+      # FT2_BUILD_LIBRARY 정의 필요, ftdebug.c 는 src/base 가 아니라
+      # builds/win32 버전을 사용해야 한다.
       # -------------------------------------------------------------------
       - name: Build freetype-2.4.2
         working-directory: third_party/freetype-2.4.2
         run: |
-          call "%VCVARSALL%" x86 -vcvars_ver=12.0
+          call "%VCVARSALL%" x86
           if not exist build mkdir build
           cd build
           cl %CFLAGS_COMMON% /D "FT2_BUILD_LIBRARY" ^
@@ -171,7 +238,9 @@ jobs:
           if errorlevel 1 exit /b 1
 
       # -------------------------------------------------------------------
-      # xpdf-3.01
+      # xpdf-3.01  (goo + fofi + splash, xpdf/*.cc 는 실행파일 소스라 제외)
+      # aconf-win32.h 를 aconf.h 로 복사해야 <aconf.h> 인클루드가 해석된다.
+      # splash/SplashFT*.cc 가 freetype 공개 헤더를 필요로 한다.
       # -------------------------------------------------------------------
       - name: Prepare xpdf win32 config
         working-directory: third_party/xpdf-3.01
@@ -181,7 +250,7 @@ jobs:
       - name: Build xpdf-3.01
         working-directory: third_party/xpdf-3.01
         run: |
-          call "%VCVARSALL%" x86 -vcvars_ver=12.0
+          call "%VCVARSALL%" x86
           if not exist build mkdir build
           cd build
           cl %CFLAGS_COMMON% ^
@@ -234,7 +303,9 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 2) js-1.8.5 (SpiderMonkey) 빌드
+  # 2) js-1.8.5 (SpiderMonkey) : configure 기반 빌드라 별도 잡으로 분리.
+  #    MozillaBuild 로 시도하지만 2011년 소스가 현재 툴체인과 완전히 맞지
+  #    않을 수 있어 실패 가능성이 높다는 점을 감안한다.
   # ---------------------------------------------------------------------------
   build-js185-spidermonkey:
     runs-on: windows-2022
@@ -246,28 +317,52 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install MSVC v120 (VS2013) Toolset via VS Installer
+      # build-libs 잡과 동일한 방식(ISO 직접 다운로드, Chocolatey 미사용)으로
+      # 이 잡도 독립된 러너이므로 별도로 v120을 설치해야 한다.
+      - name: Download VS2013 Update 5 (Desktop Express) ISO
+        shell: pwsh
         run: |
-          echo "Installing MSVC v120 toolset..."
-          "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" modify ^
-            --installPath "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" ^
-            --add Microsoft.VisualStudio.Component.VC.120 ^
-            --passive --norestart
-          if errorlevel 1 (
-            echo [WARNING] VS Installer finished with non-zero exit code. Proceeding to verification...
-          )
+          $isoPath = "$env:RUNNER_TEMP\vs2013.iso"
+          Invoke-WebRequest -Uri $env:VS2013_ISO_URL -OutFile $isoPath -UseBasicParsing
+          Write-Host "Downloaded $isoPath"
+
+      - name: Install VS2013 Desktop Express (v120 toolset) from ISO
+        shell: pwsh
+        run: |
+          $isoPath = "$env:RUNNER_TEMP\vs2013.iso"
+          $logPath = "$env:RUNNER_TEMP\vs2013_install.log"
+          $mount = Mount-DiskImage -ImagePath $isoPath -PassThru
+          $driveLetter = ($mount | Get-Volume).DriveLetter
+          $setupExe = "${driveLetter}:\wdexpress_full.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "/Q", "/NoRestart", "/Log", $logPath `
+            -Wait -PassThru
+          Write-Host "Installer exit code: $($proc.ExitCode)"
+          Dismount-DiskImage -ImagePath $isoPath
+          if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
+            Write-Host "::error::VS2013 installer failed with exit code $($proc.ExitCode)"
+            Get-Content $logPath -ErrorAction SilentlyContinue | Select-Object -Last 200
+            exit 1
+          }
 
       - name: Verify VS2013 toolset is available
         run: |
           if not exist "%VCVARSALL%" (
-            echo [FATAL] "%VCVARSALL%" not found.
+            echo [FATAL] "%VCVARSALL%" not found. See build-libs job notes.
             exit /b 1
           )
 
+      # MozillaBuild 는 SpiderMonkey 1.8.5 를 Windows 에서 빌드할 때
+      # 표준적으로 요구되는 MSYS 유사 셸/Perl/Python 묶음이다.
+      # Chocolatey 대신 Mozilla 공식 배포처(ftp.mozilla.org)에서 설치 파일을
+      # 직접 받아 조용히 설치한다.
       - name: Install MozillaBuild
         continue-on-error: true
+        shell: pwsh
         run: |
-          choco install mozillabuild -y --no-progress
+          $exePath = "$env:RUNNER_TEMP\MozillaBuildSetup.exe"
+          Invoke-WebRequest -Uri "https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe" -OutFile $exePath -UseBasicParsing
+          Start-Process -FilePath $exePath -ArgumentList "/S" -Wait
 
       - name: Verify MozillaBuild is available
         id: check_mozillabuild
@@ -279,12 +374,17 @@ jobs:
             echo skip=false>> %GITHUB_OUTPUT%
           )
 
+      # configure && make 는 MozillaBuild 의 MSYS 셸 안에서 실행해야 하고,
+      # 그 안에서 VS2013 의 cl.exe 를 PATH 에 넣기 위해 vcvarsall 결과를
+      # 환경변수로 넘겨준다. 이 저장소의 js-1.8.5 소스가 최신 MozillaBuild와
+      # 100% 호환된다는 보장이 없으므로, 실패 시 로그를 보고 config/*.mk 나
+      # configure.in 쪽을 개별적으로 손봐야 할 수 있다.
       - name: Configure & build SpiderMonkey (best effort)
         if: steps.check_mozillabuild.outputs.skip != 'true'
         working-directory: third_party/js-1.8.5/js/src
         continue-on-error: true
         run: |
-          call "%VCVARSALL%" x86 -vcvars_ver=12.0
+          call "%VCVARSALL%" x86
           set MOZ_TOOLS=C:\mozilla-build
           "C:\mozilla-build\start-shell.bat" -c "cd js/src && ./configure --enable-optimize --disable-debug --target=i686-pc-mingw32 --with-macos-sdk=no && make"
 
