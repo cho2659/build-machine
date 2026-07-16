@@ -159,8 +159,14 @@ jobs:
           :: 등 BSD 타입을 요구하므로, 본 빌드와 동일하게 /FI win_bsd_types_compat.h 를 강제 포함해야 한다.
           :: (이전에는 이 플래그가 빠져 있어 mkg3states.exe 빌드가 조용히 실패 -> tif_fax3sm.c 미생성 ->
           ::  본 컴파일에서 "Cannot open source file: '..\tif_fax3sm.c'" 로 이어졌음)
+          :: [FIX] LNK2019: unresolved external symbol __TIFFerrorHandler / __TIFFwarningHandler.
+          :: mkg3states.c가 tif_error.c/tif_warning.c의 TIFFError()/TIFFSetWarningHandler()를
+          :: 끌어오는데, 이 심볼들의 실제 저장소(전역 변수)는 tif_error.c/tif_warning.c 자체가
+          :: 아니라 tif_win32.c 쪽에 있는 것으로 보인다(본 tiff DLL 빌드 파일 목록엔 있지만
+          :: 이 mini 빌드에는 빠져 있던 유일한 파일). tif_win32.c와, 그것이 쓰는 user32.lib를
+          :: 함께 추가한다.
           echo int optind = 1; char *optarg = 0; int getopt(int argc, char **argv, char *opts) { return -1; } > dummy_getopt.c
-          cl /nologo /O2 /MD /D "WIN32" /FI "..\win_bsd_types_compat.h" /I.. /Fe:mkg3states.exe ..\mkg3states.c dummy_getopt.c ..\tif_error.c ..\tif_warning.c
+          cl /nologo /O2 /MD /D "WIN32" /FI "..\win_bsd_types_compat.h" /I.. /Fe:mkg3states.exe ..\mkg3states.c dummy_getopt.c ..\tif_error.c ..\tif_warning.c ..\tif_win32.c user32.lib
           if errorlevel 1 exit /b 1
           if not exist mkg3states.exe (
               echo [FATAL] mkg3states.exe was not produced.
@@ -320,12 +326,14 @@ jobs:
           cd build
 
           :: [FIX] SplashFTFont.cc(17) : error C2006 / C1083 ("#include FT_FREETYPE_H" 매크로가
-          :: 비어있는 채로 확장됨) 은 HAVE_FREETYPE_FREETYPE_H 정의로 인해 소스가
-          :: "#include <ft2build.h> + #include FT_FREETYPE_H" 경로를 타면서, FT_FREETYPE_H
-          :: 매크로를 정의해 주는 freetype/config/ftheader.h 인클루드 체인이 깨졌기 때문이다.
-          :: HAVE_FREETYPE_FREETYPE_H 정의를 제거하여 freetype-2.4.2가 제공하는 표준
-          :: ft2build.h / FT_FREETYPE_H 매크로 방식을 그대로 사용하도록 한다.
-          cl /nologo /c /O2 /Z7 /GL /EHsc /MD /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
+          :: 비어있는 채로 확장됨). tiff-v3.4의 win_bsd_types_compat.h와 동일한 방식으로,
+          :: 소스의 include 순서를 직접 추측/수정하는 대신 ft2build.h 를 모든 xpdf 소스에
+          :: /FI 로 강제 선행 include 시켜, FT_FREETYPE_H 매크로가 항상 정의되어 있는
+          :: 상태에서 컴파일되도록 한다. HAVE_FREETYPE_FREETYPE_H 는 freetype-2.4.2의
+          :: include 구조(freetype/freetype.h가 include 루트 밑에 중첩)에 맞는 정의라
+          :: 그대로 유지한다.
+          cl /nologo /c /O2 /Z7 /GL /EHsc /MD /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" /D "HAVE_FREETYPE_FREETYPE_H" ^
+          /FI "..\..\freetype-2.4.2\include\ft2build.h" ^
           /I.. /I..\goo /I..\fofi /I..\splash /I..\xpdf ^
           /I..\..\freetype-2.4.2\include ^
           ..\goo\FixedPoint.cc ..\goo\GHash.cc ..\goo\GList.cc ^
