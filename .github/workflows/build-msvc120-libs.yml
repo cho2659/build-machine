@@ -1,21 +1,49 @@
 name: Build third_party libs (MSVC 12.0 / v120 toolset)
 
+# =============================================================================
+# third_party 내 6개 라이브러리를 MSVC 12.0 (Visual Studio 2013 Update 5,
+# v120 toolset)으로 빌드해 .lib 로 산출한다.
+#
+#   컴파일 : cl /c /O2 /Z7  /EHsc /D "WIN32" ...
+#   보관   : lib  /MACHINE:X86 /OUT:xxx.lib *.obj
+#
+# 파일 구성:
+#   - MSVC v120 설치/복원  -> .github/actions/setup-msvc120/action.yml (별도)
+#   - git push (재시도)    -> .github/actions/push-output/action.yml   (별도)
+#   - 6개 라이브러리 빌드  -> 이 파일 하나에 통합 (단일 job, 순차 step)
+#
+# 동작 방식:
+#   - 모든 라이브러리 빌드가 하나의 job 안에서 순서대로 실행된다.
+#   - 각 빌드 step은 continue-on-error: true 라 실패해도 job이 멈추지 않고
+#     바로 다음 라이브러리 빌드로 넘어간다 (스킵).
+#   - 각 빌드 step 직후 결과물이 있으면 바로 git push 한다 (build-output/ 이
+#     비어 있으면, 즉 실패했으면 push-output이 조용히 스킵).
+#
+# ⚠️ 캐비어트
+#   1) windows-2022 러너의 VS2022 설치 프로그램에는 "v120 (VS2013)" 개별
+#      구성 요소가 없다 (VS2017부터 side-by-side 레거시 툴셋을 v140까지만
+#      남기고 제거 - github.com/actions/runner-images#7390). setup-msvc120
+#      action이 VS2013 Update 5 Desktop Express ISO를 직접 받아 설치하고,
+#      필요한 VC\ 서브트리만 추출해 repo에 push해 다음 실행부터는
+#      재설치 없이 복원만 하도록 한다.
+#   2) js-1.8.5 (SpiderMonkey)는 configure 기반 빌드라 다른 5개와 다르고,
+#      MozillaBuild 툴체인이 2011년 소스와 100% 호환된다는 보장이 없어
+#      best-effort로 처리한다.
+#   3) tiff-v3.4의 u_long/u_short/u_char 미정의(C2016/C2061), version.h
+#      누락(C1083) 컴파일 실패는 아래 tiff step 안에서 직접 고친다.
+# =============================================================================
+
 on:
   workflow_dispatch:
 
+# push하는 워크플로우이므로 같은 브랜치에서 여러 실행이 겹쳐 out/, tools/
+# 커밋이 서로 경쟁하지 않도록 순차 실행시킨다.
 concurrency:
   group: build-msvc120-libs-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
   contents: write
-
-# 환경 변수 전역 설정 (본인의 setup-msvc120 복원 경로에 맞게 MSVC_ROOT를 조절해 주세요)
-env:
-  # setup-msvc120 액션이 툴체인을 복원하는 폴더 내의 "VC" 디렉토리 경로
-  MSVC_ROOT: "${{ github.workspace }}/.github/actions/setup-msvc120/VC"
-  # windows-2022 러너에 기본 설치되어 있는 Windows 8.1 SDK 경로 (Static Library 링크용)
-  SDK_ROOT: "C:\Program Files (x86)\\Windows Kits\\8.1"
 
 jobs:
   build:
@@ -44,21 +72,19 @@ jobs:
         shell: cmd
         working-directory: third_party/zlib-1.2.1
         run: |
-          :: vcvarsall.bat 없이 환경 변수 수동 바인딩
-          set "PATH=%MSVC_ROOT%\bin;%PATH%"
-          set "INCLUDE=%MSVC_ROOT%\include;%SDK_ROOT%\Include\um;%SDK_ROOT%\Include\shared"
-          set "LIB=%MSVC_ROOT%\lib;%SDK_ROOT%\Lib\winv64\um\x86"
+          call "${{ steps.msvc.outputs.vcvarsall }}" x86
+          if errorlevel 1 exit /b 1
 
           if not exist build mkdir build
           cd build
 
-          cl /nologo /c /O2 /Z7 /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
+          cl /nologo /c /O2 /Z7  /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
             ..\adler32.c ..\compress.c ..\crc32.c ..\deflate.c ..\gzio.c ^
             ..\infback.c ..\inffast.c ..\inflate.c ..\inftrees.c ..\trees.c ^
             ..\uncompr.c ..\zutil.c
           if errorlevel 1 exit /b 1
 
-          lib /nologo /MACHINE:X86 /OUT:zlib-1.2.1.lib *.obj
+          lib /nologo  /MACHINE:X86 /OUT:zlib-1.2.1.lib *.obj
           if errorlevel 1 exit /b 1
 
           copy /Y zlib-1.2.1.lib "%GITHUB_WORKSPACE%\build-output\" >nul
@@ -93,15 +119,13 @@ jobs:
         shell: cmd
         working-directory: third_party/openjpeg-version.1.5.2/libopenjpeg
         run: |
-          :: vcvarsall.bat 없이 환경 변수 수동 바인딩
-          set "PATH=%MSVC_ROOT%\bin;%PATH%"
-          set "INCLUDE=%MSVC_ROOT%\include;%SDK_ROOT%\Include\um;%SDK_ROOT%\Include\shared"
-          set "LIB=%MSVC_ROOT%\lib;%SDK_ROOT%\Lib\winv64\um\x86"
+          call "${{ steps.msvc.outputs.vcvarsall }}" x86
+          if errorlevel 1 exit /b 1
 
           if not exist build mkdir build
           cd build
 
-          cl /nologo /c /O2 /Z7 /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" /I.. ^
+          cl /nologo /c /O2 /Z7  /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" /I.. ^
             ..\bio.c ..\cidx_manager.c ..\cio.c ..\dwt.c ..\event.c ^
             ..\image.c ..\j2k.c ..\j2k_lib.c ..\jp2.c ..\jpt.c ..\mct.c ^
             ..\mqc.c ..\openjpeg.c ..\phix_manager.c ..\pi.c ^
@@ -109,7 +133,7 @@ jobs:
             ..\thix_manager.c ..\tpix_manager.c
           if errorlevel 1 exit /b 1
 
-          lib /nologo /MACHINE:X86 /OUT:openjpeg-1.5.2.lib *.obj
+          lib /nologo  /MACHINE:X86 /OUT:openjpeg-1.5.2.lib *.obj
           if errorlevel 1 exit /b 1
 
           copy /Y openjpeg-1.5.2.lib "%GITHUB_WORKSPACE%\build-output\" >nul
@@ -127,12 +151,18 @@ jobs:
 
       # ==========================================================================
       # tiff-v3.4 (libtiff)
+      # u_long/u_short/u_char 미정의(C2016/C2061), version.h 누락(C1083) 수정 포함
       # ==========================================================================
       - name: Fix tiff-v3.4 - generate BSD-type compat header & version.h
         continue-on-error: true
         shell: pwsh
         working-directory: third_party/tiff-v3.4
         run: |
+          # u_long/u_short/u_char: tiff-v3.4는 1996년 BSD 코드라 이 타입들이
+          # <sys/types.h>에서 온다고 가정하지만, MSVC의 <sys/types.h>는 이를
+          # 정의하지 않아 tif_dir.h(39)에서 C2016/C2061로 구조체 정의가
+          # 깨진다. <winsock2.h>가 Windows에서 정확히 이 세 타입을 제공하므로
+          # 모든 tiff 소스에 /FI 로 강제 include한다.
           @"
           #ifndef WIN_BSD_TYPES_COMPAT_H
           #define WIN_BSD_TYPES_COMPAT_H
@@ -143,6 +173,9 @@ jobs:
           #endif /* WIN_BSD_TYPES_COMPAT_H */
           "@ | Set-Content -Path win_bsd_types_compat.h -Encoding ASCII
 
+          # version.h: 원래 mkversion.exe가 빌드 전에 생성해야 하는데 이
+          # 소스 트리엔 그 도구가 없어 tif_version.c(26)에서 C1083이 난다.
+          # tif_version.c와 같은 폴더에 정적으로 직접 생성한다.
           '#define TIFFLIB_VERSION_STR "LIBTIFF, Version 3.4\nCopyright (c) 1988-2013 Sam Leffler\nCopyright (c) 1991-2013 Silicon Graphics, Inc."' |
             Set-Content -Path version.h -Encoding ASCII
 
@@ -152,15 +185,13 @@ jobs:
         shell: cmd
         working-directory: third_party/tiff-v3.4/libtiff
         run: |
-          :: vcvarsall.bat 없이 환경 변수 수동 바인딩
-          set "PATH=%MSVC_ROOT%\bin;%PATH%"
-          set "INCLUDE=%MSVC_ROOT%\include;%SDK_ROOT%\Include\um;%SDK_ROOT%\Include\shared"
-          set "LIB=%MSVC_ROOT%\lib;%SDK_ROOT%\Lib\winv64\um\x86"
+          call "${{ steps.msvc.outputs.vcvarsall }}" x86
+          if errorlevel 1 exit /b 1
 
           if not exist build mkdir build
           cd build
 
-          cl /nologo /c /O2 /Z7 /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
+          cl /nologo /c /O2 /Z7  /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
             /FI "..\win_bsd_types_compat.h" /I..\..\contrib\winnt /I.. /I..\..\..\zlib-1.2.1 ^
             ..\tif_aux.c ..\tif_close.c ..\tif_codec.c ..\tif_compress.c ^
             ..\tif_dir.c ..\tif_dirinfo.c ..\tif_dirread.c ..\tif_dirwrite.c ^
@@ -172,7 +203,7 @@ jobs:
             ..\tif_write.c ..\tif_zip.c
           if errorlevel 1 exit /b 1
 
-          lib /nologo /MACHINE:X86 /OUT:tiff-v3.4.lib *.obj
+          lib /nologo  /MACHINE:X86 /OUT:tiff-v3.4.lib *.obj
           if errorlevel 1 exit /b 1
 
           copy /Y tiff-v3.4.lib "%GITHUB_WORKSPACE%\build-output\" >nul
@@ -189,7 +220,7 @@ jobs:
           paths: "out/*.lib"
 
       # ==========================================================================
-      # freetype-2.4.2
+      # freetype-2.4.2 (공식 single-object 파일 목록 사용)
       # ==========================================================================
       - name: Build freetype-2.4.2
         id: build-freetype
@@ -197,15 +228,13 @@ jobs:
         shell: cmd
         working-directory: third_party/freetype-2.4.2
         run: |
-          :: vcvarsall.bat 없이 환경 변수 수동 바인딩
-          set "PATH=%MSVC_ROOT%\bin;%PATH%"
-          set "INCLUDE=%MSVC_ROOT%\include;%SDK_ROOT%\Include\um;%SDK_ROOT%\Include\shared"
-          set "LIB=%MSVC_ROOT%\lib;%SDK_ROOT%\Lib\winv64\um\x86"
+          call "${{ steps.msvc.outputs.vcvarsall }}" x86
+          if errorlevel 1 exit /b 1
 
           if not exist build mkdir build
           cd build
 
-          cl /nologo /c /O2 /Z7 /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
+          cl /nologo /c /O2 /Z7  /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
             /D "FT2_BUILD_LIBRARY" /I..\include /I..\builds\win32 ^
             ..\src\autofit\autofit.c ^
             ..\src\bdf\bdf.c ^
@@ -247,7 +276,7 @@ jobs:
             ..\src\winfonts\winfnt.c
           if errorlevel 1 exit /b 1
 
-          lib /nologo /MACHINE:X86 /OUT:freetype-2.4.2.lib *.obj
+          lib /nologo  /MACHINE:X86 /OUT:freetype-2.4.2.lib *.obj
           if errorlevel 1 exit /b 1
 
           copy /Y freetype-2.4.2.lib "%GITHUB_WORKSPACE%\build-output\" >nul
@@ -264,7 +293,7 @@ jobs:
           paths: "out/*.lib"
 
       # ==========================================================================
-      # xpdf-3.01
+      # xpdf-3.01 (goo + fofi + splash + xpdf 코어, 실행파일 소스 제외)
       # ==========================================================================
       - name: Prepare xpdf win32 config
         continue-on-error: true
@@ -278,15 +307,13 @@ jobs:
         shell: cmd
         working-directory: third_party/xpdf-3.01
         run: |
-          :: vcvarsall.bat 없이 환경 변수 수동 바인딩
-          set "PATH=%MSVC_ROOT%\bin;%PATH%"
-          set "INCLUDE=%MSVC_ROOT%\include;%SDK_ROOT%\Include\um;%SDK_ROOT%\Include\shared"
-          set "LIB=%MSVC_ROOT%\lib;%SDK_ROOT%\Lib\winv64\um\x86"
+          call "${{ steps.msvc.outputs.vcvarsall }}" x86
+          if errorlevel 1 exit /b 1
 
           if not exist build mkdir build
           cd build
 
-          cl /nologo /c /O2 /Z7 /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
+          cl /nologo /c /O2 /Z7  /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
             /I.. /I..\goo /I..\fofi /I..\splash /I..\xpdf ^
             /I..\..\freetype-2.4.2\include ^
             ..\goo\FixedPoint.cc ..\goo\GHash.cc ..\goo\GList.cc ^
@@ -317,7 +344,7 @@ jobs:
             ..\xpdf\XpdfPluginAPI.cc ..\xpdf\PSOutputDev.cc
           if errorlevel 1 exit /b 1
 
-          lib /nologo /MACHINE:X86 /OUT:xpdf-3.01.lib *.obj
+          lib /nologo  /MACHINE:X86 /OUT:xpdf-3.01.lib *.obj
           if errorlevel 1 exit /b 1
 
           copy /Y xpdf-3.01.lib "%GITHUB_WORKSPACE%\build-output\" >nul
@@ -355,11 +382,9 @@ jobs:
             exit /b 1
           )
 
-          :: MozillaBuild 터미널 세션 내부 진입을 위해 최소한의 환경 변수 매핑
-          set "PATH=%MSVC_ROOT%\bin;%PATH%"
-          set "INCLUDE=%MSVC_ROOT%\include;%SDK_ROOT%\Include\um;%SDK_ROOT%\Include\shared"
-          set "LIB=%MSVC_ROOT%\lib;%SDK_ROOT%\Lib\winv64\um\x86"
-          
+          call "${{ steps.msvc.outputs.vcvarsall }}" x86
+          if errorlevel 1 exit /b 1
+
           set MOZ_TOOLS=C:\mozilla-build
           "C:\mozilla-build\start-shell.bat" -c "cd js/src && ./configure --enable-optimize --disable-debug --target=i686-pc-mingw32 --with-macos-sdk=no && make"
           if errorlevel 1 exit /b 1
@@ -380,7 +405,10 @@ jobs:
           paths: "out/*.lib"
 
       # ==========================================================================
-      # Summary
+      # 요약: 어떤 라이브러리가 실패했는지 로그로 남긴다 (job 자체는 계속 성공
+      # 처리 - 실패한 빌드는 스킵하고 넘어가는 것이 요구사항이라 job을 굳이
+      # 실패 처리하지 않는다. 실패 여부를 CI에서 강제로 보고 싶다면 이 step의
+      # `run: exit 1`을 켜면 된다).
       # ==========================================================================
       - name: Summary
         if: always()
