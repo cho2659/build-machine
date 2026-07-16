@@ -4,8 +4,8 @@ name: Build third_party libs (MSVC 12.0 / v120 toolset)
 # third_party 내 6개 라이브러리를 MSVC 12.0 (Visual Studio 2013 Update 5,
 # v120 toolset)으로 빌드해 .lib 로 산출한다.
 #
-#   컴파일 : cl /c /O2 /Z7 /GL /EHsc /D "WIN32" ...
-#   보관   : lib /LTCG /MACHINE:X86 /OUT:xxx.lib *.obj
+#   컴파일 : cl /c /O2 /Z7  /EHsc /D "WIN32" ...
+#   보관   : lib  /MACHINE:X86 /OUT:xxx.lib *.obj
 #
 # 파일 구성:
 #   - MSVC v120 설치/복원  -> .github/actions/setup-msvc120/action.yml (별도)
@@ -78,13 +78,13 @@ jobs:
           if not exist build mkdir build
           cd build
 
-          cl /nologo /c /O2 /Z7 /GL /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
+          cl /nologo /c /O2 /Z7  /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
             ..\adler32.c ..\compress.c ..\crc32.c ..\deflate.c ..\gzio.c ^
             ..\infback.c ..\inffast.c ..\inflate.c ..\inftrees.c ..\trees.c ^
             ..\uncompr.c ..\zutil.c
           if errorlevel 1 exit /b 1
 
-          lib /nologo /LTCG /MACHINE:X86 /OUT:zlib-1.2.1.lib *.obj
+          lib /nologo  /MACHINE:X86 /OUT:zlib-1.2.1.lib *.obj
           if errorlevel 1 exit /b 1
 
           copy /Y zlib-1.2.1.lib "%GITHUB_WORKSPACE%\build-output\" >nul
@@ -125,7 +125,7 @@ jobs:
           if not exist build mkdir build
           cd build
 
-          cl /nologo /c /O2 /Z7 /GL /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" /I.. ^
+          cl /nologo /c /O2 /Z7  /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" /I.. ^
             ..\bio.c ..\cidx_manager.c ..\cio.c ..\dwt.c ..\event.c ^
             ..\image.c ..\j2k.c ..\j2k_lib.c ..\jp2.c ..\jpt.c ..\mct.c ^
             ..\mqc.c ..\openjpeg.c ..\phix_manager.c ..\pi.c ^
@@ -133,7 +133,7 @@ jobs:
             ..\thix_manager.c ..\tpix_manager.c
           if errorlevel 1 exit /b 1
 
-          lib /nologo /LTCG /MACHINE:X86 /OUT:openjpeg-1.5.2.lib *.obj
+          lib /nologo  /MACHINE:X86 /OUT:openjpeg-1.5.2.lib *.obj
           if errorlevel 1 exit /b 1
 
           copy /Y openjpeg-1.5.2.lib "%GITHUB_WORKSPACE%\build-output\" >nul
@@ -191,7 +191,7 @@ jobs:
           if not exist build mkdir build
           cd build
 
-          cl /nologo /c /O2 /Z7 /GL /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
+          cl /nologo /c /O2 /Z7  /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
             /FI "..\win_bsd_types_compat.h" /I..\..\contrib\winnt /I.. /I..\..\..\zlib-1.2.1 ^
             ..\tif_aux.c ..\tif_close.c ..\tif_codec.c ..\tif_compress.c ^
             ..\tif_dir.c ..\tif_dirinfo.c ..\tif_dirread.c ..\tif_dirwrite.c ^
@@ -203,7 +203,7 @@ jobs:
             ..\tif_write.c ..\tif_zip.c
           if errorlevel 1 exit /b 1
 
-          lib /nologo /LTCG /MACHINE:X86 /OUT:tiff-v3.4.lib *.obj
+          lib /nologo  /MACHINE:X86 /OUT:tiff-v3.4.lib *.obj
           if errorlevel 1 exit /b 1
 
           copy /Y tiff-v3.4.lib "%GITHUB_WORKSPACE%\build-output\" >nul
@@ -234,7 +234,7 @@ jobs:
           if not exist build mkdir build
           cd build
 
-          cl /nologo /c /O2 /Z7 /GL /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
+          cl /nologo /c /O2 /Z7  /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
             /D "FT2_BUILD_LIBRARY" /I..\include /I..\builds\win32 ^
             ..\src\autofit\autofit.c ^
             ..\src\bdf\bdf.c ^
@@ -276,7 +276,7 @@ jobs:
             ..\src\winfonts\winfnt.c
           if errorlevel 1 exit /b 1
 
-          lib /nologo /LTCG /MACHINE:X86 /OUT:freetype-2.4.2.lib *.obj
+          lib /nologo  /MACHINE:X86 /OUT:freetype-2.4.2.lib *.obj
           if errorlevel 1 exit /b 1
 
           copy /Y freetype-2.4.2.lib "%GITHUB_WORKSPACE%\build-output\" >nul
@@ -313,7 +313,7 @@ jobs:
           if not exist build mkdir build
           cd build
 
-          cl /nologo /c /O2 /Z7 /GL /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
+          cl /nologo /c /O2 /Z7  /EHsc /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
             /I.. /I..\goo /I..\fofi /I..\splash /I..\xpdf ^
             /I..\..\freetype-2.4.2\include ^
             ..\goo\FixedPoint.cc ..\goo\GHash.cc ..\goo\GList.cc ^
@@ -344,7 +344,7 @@ jobs:
             ..\xpdf\XpdfPluginAPI.cc ..\xpdf\PSOutputDev.cc
           if errorlevel 1 exit /b 1
 
-          lib /nologo /LTCG /MACHINE:X86 /OUT:xpdf-3.01.lib *.obj
+          lib /nologo  /MACHINE:X86 /OUT:xpdf-3.01.lib *.obj
           if errorlevel 1 exit /b 1
 
           copy /Y xpdf-3.01.lib "%GITHUB_WORKSPACE%\build-output\" >nul
