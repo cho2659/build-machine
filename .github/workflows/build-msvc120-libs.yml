@@ -3,9 +3,6 @@ name: Build third_party libs (MSVC 12.0 / v120 toolset) - DLL + PDB Edition
 # =============================================================================
 # third_party 내 5개 라이브러리를 MSVC 12.0 (Visual Studio 2013 Update 5,
 # v120 toolset)으로 빌드해 .dll 및 .pdb 로 산출한다.
-#
-#   컴파일 : cl /c /O2 /Z7 /GL /EHsc /MD /D "WIN32" ...
-#   링크   : link /DLL /LTCG /DEBUG /MACHINE:X86 /OUT:xxx.dll *.obj
 # =============================================================================
 
 on:
@@ -157,11 +154,19 @@ jobs:
           if not exist build mkdir build
           cd build
 
+          :: tif_fax3sm.c 동적 생성을 위해 mkg3states 컴파일 (getopt 의존성을 피하기 위해 dummy_getopt.c 사용)
+          echo int optind = 1; char *optarg = 0; int getopt(int argc, char **argv, char *opts) { return -1; } > dummy_getopt.c
+          cl /nologo /O2 /MD /D "WIN32" /I.. /Fe:mkg3states.exe ..\mkg3states.c dummy_getopt.c ..\tif_error.c ..\tif_warning.c
+          if exist mkg3states.exe (
+              mkg3states.exe ..\tif_fax3sm.c
+          )
+
+          :: tif_fax3sm.c 생성 후 다시 컴파일에 포함시킴
           cl /nologo /c /O2 /Z7 /GL /EHsc /MD /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
             /FI "..\win_bsd_types_compat.h" /I..\..\contrib\winnt /I.. /I..\..\..\zlib-1.2.1 ^
             ..\tif_aux.c ..\tif_close.c ..\tif_codec.c ..\tif_compress.c ^
             ..\tif_dir.c ..\tif_dirinfo.c ..\tif_dirread.c ..\tif_dirwrite.c ^
-            ..\tif_dumpmode.c ..\tif_error.c ..\tif_fax3.c ..\tif_flush.c ^
+            ..\tif_dumpmode.c ..\tif_error.c ..\tif_fax3.c ..\tif_fax3sm.c ..\tif_flush.c ^
             ..\tif_getimage.c ..\tif_lzw.c ..\tif_next.c ..\tif_open.c ^
             ..\tif_packbits.c ..\tif_pixarlog.c ..\tif_predict.c ..\tif_print.c ^
             ..\tif_read.c ..\tif_strip.c ..\tif_swab.c ..\tif_thunder.c ^
@@ -169,7 +174,7 @@ jobs:
             ..\tif_write.c ..\tif_zip.c
           if errorlevel 1 exit /b 1
           
-          :: user32.lib를 링크 대상에 추가합니다.
+          :: user32.lib를 링크 대상에 추가
           link /nologo /DLL /LTCG /DEBUG /MACHINE:X86 /OUT:tiff-v3.4.dll *.obj user32.lib
           if errorlevel 1 exit /b 1
 
@@ -188,7 +193,7 @@ jobs:
           paths: "out/*"
 
       # ==========================================================================
-      # freetype-2.4.2 (공식 single-object 파일 목록 사용)
+      # freetype-2.4.2
       # ==========================================================================
       - name: Build freetype-2.4.2
         id: build-freetype
@@ -202,8 +207,9 @@ jobs:
           if not exist build mkdir build
           cd build
 
+          :: DLL Export를 위해 FT2_DLL 및 DLL_EXPORT 플래그 추가
           cl /nologo /c /O2 /Z7 /GL /EHsc /MD /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
-            /D "FT2_BUILD_LIBRARY" /I..\include /I..\builds\win32 ^
+            /D "FT2_BUILD_LIBRARY" /D "FT2_DLL" /D "DLL_EXPORT" /I..\include /I..\builds\win32 ^
             ..\src\autofit\autofit.c ^
             ..\src\bdf\bdf.c ^
             ..\src\cff\cff.c ^
@@ -247,14 +253,16 @@ jobs:
           link /nologo /DLL /LTCG /DEBUG /MACHINE:X86 /OUT:freetype-2.4.2.dll *.obj
           if errorlevel 1 exit /b 1
 
+          :: xpdf 빌드 시 참조 가능하도록 .lib 파일도 함께 복사
           copy /Y freetype-2.4.2.dll "%GITHUB_WORKSPACE%\build-output\" >nul
           copy /Y freetype-2.4.2.pdb "%GITHUB_WORKSPACE%\build-output\" >nul
+          copy /Y freetype-2.4.2.lib "%GITHUB_WORKSPACE%\build-output\" >nul
 
       - name: Push freetype-2.4.2 output
         if: always()
         shell: pwsh
         run: |
-          Get-ChildItem build-output\freetype-2.4.2.dll, build-output\freetype-2.4.2.pdb -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
+          Get-ChildItem build-output\freetype-2.4.2.dll, build-output\freetype-2.4.2.pdb, build-output\freetype-2.4.2.lib -ErrorAction SilentlyContinue | Copy-Item -Destination out -Force
       - uses: ./.github/actions/push-output
         if: always()
         with:
@@ -262,7 +270,7 @@ jobs:
           paths: "out/*"
 
       # ==========================================================================
-      # xpdf-3.01 (goo + fofi + splash + xpdf 코어, 실행파일 소스 제외)
+      # xpdf-3.01
       # ==========================================================================
       - name: Prepare xpdf win32 config
         continue-on-error: true
@@ -282,7 +290,8 @@ jobs:
           if not exist build mkdir build
           cd build
 
-          cl /nologo /c /O2 /Z7 /GL /EHsc /MD /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
+          :: SplashFTFont.cc를 위해 HAVE_FREETYPE_FREETYPE_H 추가 및 소스파일 원복
+          cl /nologo /c /O2 /Z7 /GL /EHsc /MD /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" /D "HAVE_FREETYPE_FREETYPE_H" ^
           /I.. /I..\goo /I..\fofi /I..\splash /I..\xpdf ^
           /I..\..\freetype-2.4.2\include ^
           ..\goo\FixedPoint.cc ..\goo\GHash.cc ..\goo\GList.cc ^
@@ -292,7 +301,7 @@ jobs:
           ..\fofi\FoFiType1.cc ..\fofi\FoFiType1C.cc ^
           ..\splash\Splash.cc ..\splash\SplashBitmap.cc ..\splash\SplashClip.cc ^
           ..\splash\SplashFTFontEngine.cc ^
-          ..\splash\SplashFTFontFile.cc  ..\splash\SplashFont.cc ^
+          ..\splash\SplashFTFontFile.cc ..\splash\SplashFTFont.cc ..\splash\SplashFont.cc ^
           ..\splash\SplashFontEngine.cc ..\splash\SplashFontFile.cc ^
           ..\splash\SplashFontFileID.cc ..\splash\SplashPath.cc ^
           ..\splash\SplashPattern.cc ..\splash\SplashScreen.cc ^
@@ -312,8 +321,7 @@ jobs:
           ..\xpdf\UnicodeMap.cc ..\xpdf\UnicodeTypeTable.cc ..\xpdf\XRef.cc ^
           ..\xpdf\XpdfPluginAPI.cc ..\xpdf\PSOutputDev.cc
           if errorlevel 1 exit /b 1
-        
-          :: freetype 임포트 라이브러리가 복사된 %GITHUB_WORKSPACE%\build-output 폴더를 라이브러리 경로로 추가하고 링크합니다.
+          
           link /nologo /DLL /LTCG /DEBUG /MACHINE:X86 /LIBPATH:"%GITHUB_WORKSPACE%\build-output" /OUT:xpdf-3.01.dll *.obj freetype-2.4.2.lib gdi32.lib
           if errorlevel 1 exit /b 1
   
@@ -332,7 +340,7 @@ jobs:
           paths: "out/*"
 
       # ==========================================================================
-      # 요약
+      # Summary
       # ==========================================================================
       - name: Summary
         if: always()
