@@ -15,7 +15,7 @@ env:
   # setup-msvc120 액션이 툴체인을 복원하는 폴더 내의 "VC" 디렉토리 경로
   MSVC_ROOT: "${{ github.workspace }}/.github/actions/setup-msvc120/VC"
   # windows-2022 러너에 기본 설치되어 있는 Windows 8.1 SDK 경로 (Static Library 링크용)
-  SDK_ROOT: "C:\Program Files (x86)\Windows Kits\8.1"
+  SDK_ROOT: "C:\Program Files (x86)\\Windows Kits\\8.1"
 
 jobs:
   build:
