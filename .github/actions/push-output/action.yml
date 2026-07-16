@@ -31,30 +31,41 @@ runs:
             exit 0
         }
 
+        # 1. 루프 밖에서 단 한 번만 스테이징 및 커밋을 진행합니다.
+        git add -- $patterns
+
+        $status = git status --porcelain
+        if (-not $status) {
+            Write-Host "Nothing new to commit for '$label'."
+            exit 0
+        }
+
+        git commit -m "ci: add $label output [skip ci]" | Out-Null
+
         $branch = $env:GITHUB_REF_NAME
         $pushed = $false
 
+        # 2. 푸시 재시도 루프 (여기서는 오직 fetch, rebase, push만 수행합니다)
         for ($attempt = 1; $attempt -le 5; $attempt++) {
-            git add -- $patterns
+            Write-Host "Attempt $attempt to push '$label' output..."
 
-            $status = git status --porcelain
-            if (-not $status) {
-                Write-Host "Nothing new to commit for '$label'."
-                $pushed = $true
-                break
-            }
-
-            git commit -m "ci: add $label output [skip ci]" | Out-Null
-
+            # 원격 상태를 가져옵니다.
             git fetch origin $branch 2>$null
-            git rebase "origin/$branch" 2>$null
+
+            # [핵심] 리베이스 시 충돌이 나면 '현재 내 빌드 결과물(theirs)'을 무조건 우선하여 병합합니다.
+            # 리베이스 컨텍스트에서 'theirs'는 우리가 방금 커밋한 로컬 변경사항을 의미합니다.
+            git rebase -X theirs "origin/$branch" 2>$null
+
             if ($LASTEXITCODE -ne 0) {
-                Write-Host "Rebase conflict on attempt $attempt for '$label' - aborting and retrying."
+                Write-Host "Rebase conflict on attempt $attempt for '$label' - aborting and retrying with clean state."
                 git rebase --abort 2>$null
+                
+                # 혹시 모를 임시 상태 방지를 위해 원격 상태 강제 동기화 후 대기
                 Start-Sleep -Seconds (Get-Random -Minimum 3 -Maximum 10)
                 continue
             }
 
+            # 푸시 시도
             git push origin "HEAD:$branch"
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "Pushed '$label' output to $branch."
@@ -62,10 +73,14 @@ runs:
                 break
             }
 
-            Write-Host "Push rejected on attempt $attempt for '$label' - retrying."
+            Write-Host "Push rejected on attempt $attempt for '$label' (likely concurrent push) - resetting to pre-push commit and retrying."
+            
+            # 푸시가 거절당했을 경우, 리베이스 전 상태(로컬 커밋 상태)로 안전하게 되돌린 뒤 재시도합니다.
+            git reset --hard HEAD~1 2>$null
             Start-Sleep -Seconds (Get-Random -Minimum 3 -Maximum 10)
         }
 
         if (-not $pushed) {
-            Write-Host "::warning::Failed to push '$label' output after multiple retries."
-        } 
+            Write-Host "::error::Failed to push '$label' output after multiple retries."
+            exit 1
+        }
