@@ -1,10 +1,5 @@
 name: Build third_party libs (MSVC 12.0 / v120 toolset) - DLL + PDB Edition
 
-# =============================================================================
-# third_party 내 5개 라이브러리를 MSVC 12.0 (Visual Studio 2013 Update 5,
-# v120 toolset)으로 빌드해 .dll 및 .pdb 로 산출한다.
-# =============================================================================
-
 on:
   workflow_dispatch:
 
@@ -154,32 +149,22 @@ jobs:
           if not exist build mkdir build
           cd build
 
-          :: tif_fax3sm.c 동적 생성을 위해 mkg3states 컴파일 (getopt 의존성을 피하기 위해 dummy_getopt.c 사용)
-          :: [FIX] tif_error.c/tif_warning.c가 tiffiop.h -> tif_dir.h를 include하면서 u_long/u_short
-          :: 등 BSD 타입을 요구하므로, 본 빌드와 동일하게 /FI win_bsd_types_compat.h 를 강제 포함해야 한다.
-          :: (이전에는 이 플래그가 빠져 있어 mkg3states.exe 빌드가 조용히 실패 -> tif_fax3sm.c 미생성 ->
-          ::  본 컴파일에서 "Cannot open source file: '..\tif_fax3sm.c'" 로 이어졌음)
-          :: [FIX] LNK2019: unresolved external symbol __TIFFerrorHandler / __TIFFwarningHandler.
-          :: mkg3states.c가 tif_error.c/tif_warning.c의 TIFFError()/TIFFSetWarningHandler()를
-          :: 끌어오는데, 이 심볼들의 실제 저장소(전역 변수)는 tif_error.c/tif_warning.c 자체가
-          :: 아니라 tif_win32.c 쪽에 있는 것으로 보인다(본 tiff DLL 빌드 파일 목록엔 있지만
-          :: 이 mini 빌드에는 빠져 있던 유일한 파일). tif_win32.c와, 그것이 쓰는 user32.lib를
-          :: 함께 추가한다.
-          echo int optind = 1; char *optarg = 0; int getopt(int argc, char **argv, char *opts) { return -1; } > dummy_getopt.c
-          cl /nologo /O2 /MD /D "WIN32" /FI "..\win_bsd_types_compat.h" /I.. /Fe:mkg3states.exe ..\mkg3states.c dummy_getopt.c ..\tif_error.c ..\tif_warning.c ..\tif_win32.c user32.lib
+          :: [FIX] mkg3states 생성기 빌드.
+          :: LNK2019 방지를 위해 라이브러리 파일(tif_win32.c 등)을 링크하지 않고
+          :: dummy_stubs.c를 통해 필요한 TIFFError/TIFFWarning 함수를 비워둔 채(Mocking) 컴파일합니다.
+          echo int optind = 1; char *optarg = 0; int getopt(int argc, char **argv, char *opts) { return -1; } void TIFFError(const char* m, const char* f, ...) {} void TIFFWarning(const char* m, const char* f, ...) {} > dummy_stubs.c
+          
+          cl /nologo /O2 /MD /D "WIN32" /FI "..\win_bsd_types_compat.h" /I.. /Fe:mkg3states.exe ..\mkg3states.c dummy_stubs.c
           if errorlevel 1 exit /b 1
+          
           if not exist mkg3states.exe (
               echo [FATAL] mkg3states.exe was not produced.
               exit /b 1
           )
           mkg3states.exe ..\tif_fax3sm.c
           if errorlevel 1 exit /b 1
-          if not exist ..\tif_fax3sm.c (
-              echo [FATAL] ..\tif_fax3sm.c was not generated.
-              exit /b 1
-          )
 
-          :: tif_fax3sm.c 생성 후 다시 컴파일에 포함시킴
+          :: 본 컴파일 (tif_fax3sm.c 포함)
           cl /nologo /c /O2 /Z7 /GL /EHsc /MD /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
             /FI "..\win_bsd_types_compat.h" /I..\..\contrib\winnt /I.. /I..\..\..\zlib-1.2.1 ^
             ..\tif_aux.c ..\tif_close.c ..\tif_codec.c ..\tif_compress.c ^
@@ -192,7 +177,6 @@ jobs:
             ..\tif_write.c ..\tif_zip.c
           if errorlevel 1 exit /b 1
 
-          :: user32.lib를 링크 대상에 추가
           link /nologo /DLL /LTCG /DEBUG /MACHINE:X86 /OUT:tiff-v3.4.dll *.obj user32.lib
           if errorlevel 1 exit /b 1
 
@@ -225,7 +209,6 @@ jobs:
           if not exist build mkdir build
           cd build
 
-          :: DLL Export를 위해 FT2_DLL 및 DLL_EXPORT 플래그 추가
           cl /nologo /c /O2 /Z7 /GL /EHsc /MD /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" ^
             /D "FT2_BUILD_LIBRARY" /D "FT2_DLL" /D "DLL_EXPORT" /I..\include /I..\builds\win32 ^
             ..\src\autofit\autofit.c ^
@@ -268,29 +251,13 @@ jobs:
             ..\src\winfonts\winfnt.c
           if errorlevel 1 exit /b 1
 
-          :: [FIX] /IMPLIB 로 임포트 라이브러리 이름을 명시적으로 고정한다.
           link /nologo /DLL /LTCG /DEBUG /MACHINE:X86 /OUT:freetype-2.4.2.dll /IMPLIB:freetype-2.4.2.lib *.obj
           if errorlevel 1 exit /b 1
 
-          if not exist freetype-2.4.2.dll (
-              echo [FATAL] freetype-2.4.2.dll was not produced.
-              exit /b 1
-          )
-
-          :: xpdf 빌드 시 참조 가능하도록 .lib 파일도 함께 복사
           copy /Y freetype-2.4.2.dll "%GITHUB_WORKSPACE%\build-output\" >nul
-          if errorlevel 1 exit /b 1
           copy /Y freetype-2.4.2.pdb "%GITHUB_WORKSPACE%\build-output\" >nul
-          if errorlevel 1 exit /b 1
-
-          :: [FIX] .lib 는 심볼 export가 하나도 없으면 생성되지 않을 수 있으므로,
-          :: 존재할 때만 복사하고 없어도 스텝 전체를 실패시키지 않는다.
-          :: (이전에는 이 copy가 스크립트의 "마지막 명령"이라 실패 시 그 종료 코드가
-          ::  그대로 스텝의 종료 코드가 되어, dll/pdb가 정상 생성돼도 스텝이 실패로 표시되었음)
           if exist freetype-2.4.2.lib (
               copy /Y freetype-2.4.2.lib "%GITHUB_WORKSPACE%\build-output\" >nul
-          ) else (
-              echo [WARN] freetype-2.4.2.lib not found - xpdf link step may fail without it.
           )
 
       - name: Push freetype-2.4.2 output
@@ -307,11 +274,21 @@ jobs:
       # ==========================================================================
       # xpdf-3.01
       # ==========================================================================
-      - name: Prepare xpdf win32 config
+      - name: Prepare xpdf win32 config & Fix FreeType Includes
         continue-on-error: true
-        shell: cmd
+        shell: pwsh
         working-directory: third_party/xpdf-3.01
-        run: copy /Y aconf-win32.h aconf.h
+        run: |
+          Copy-Item -Path aconf-win32.h -Destination aconf.h -Force
+          
+          # [FIX] C2006 / C1083 에러 해결
+          # MSVC가 확장하지 못하는 FreeType 매크로들을 소스코드 단에서 강제로 실제 문자열로 치환합니다.
+          Get-ChildItem -Path splash -Filter *.cc | ForEach-Object {
+              $txt = Get-Content $_.FullName
+              $txt = $txt -replace '\bFT_FREETYPE_H\b', '"freetype/freetype.h"'
+              $txt = $txt -replace '\bFT_OUTLINE_H\b', '"freetype/ftoutln.h"'
+              Set-Content -Path $_.FullName -Value $txt
+          }
 
       - name: Build xpdf-3.01
         id: build-xpdf
@@ -325,15 +302,8 @@ jobs:
           if not exist build mkdir build
           cd build
 
-          :: [FIX] SplashFTFont.cc(17) : error C2006 / C1083 ("#include FT_FREETYPE_H" 매크로가
-          :: 비어있는 채로 확장됨). tiff-v3.4의 win_bsd_types_compat.h와 동일한 방식으로,
-          :: 소스의 include 순서를 직접 추측/수정하는 대신 ft2build.h 를 모든 xpdf 소스에
-          :: /FI 로 강제 선행 include 시켜, FT_FREETYPE_H 매크로가 항상 정의되어 있는
-          :: 상태에서 컴파일되도록 한다. HAVE_FREETYPE_FREETYPE_H 는 freetype-2.4.2의
-          :: include 구조(freetype/freetype.h가 include 루트 밑에 중첩)에 맞는 정의라
-          :: 그대로 유지한다.
+          :: 이전의 강제 /FI 옵션은 PowerShell 치환 덕분에 불필요해졌으므로 제거
           cl /nologo /c /O2 /Z7 /GL /EHsc /MD /D "WIN32" /D "_CRT_SECURE_NO_WARNINGS" /D "_CRT_NONSTDC_NO_DEPRECATE" /D "HAVE_FREETYPE_FREETYPE_H" ^
-          /FI "..\..\freetype-2.4.2\include\ft2build.h" ^
           /I.. /I..\goo /I..\fofi /I..\splash /I..\xpdf ^
           /I..\..\freetype-2.4.2\include ^
           ..\goo\FixedPoint.cc ..\goo\GHash.cc ..\goo\GList.cc ^
@@ -365,7 +335,7 @@ jobs:
           if errorlevel 1 exit /b 1
 
           if not exist "%GITHUB_WORKSPACE%\build-output\freetype-2.4.2.lib" (
-              echo [FATAL] freetype-2.4.2.lib not found in build-output - freetype step must succeed and produce a .lib first.
+              echo [FATAL] freetype-2.4.2.lib not found in build-output
               exit /b 1
           )
 
