@@ -161,7 +161,7 @@ jobs:
             /FI "..\win_bsd_types_compat.h" /I..\..\contrib\winnt /I.. /I..\..\..\zlib-1.2.1 ^
             ..\tif_aux.c ..\tif_close.c ..\tif_codec.c ..\tif_compress.c ^
             ..\tif_dir.c ..\tif_dirinfo.c ..\tif_dirread.c ..\tif_dirwrite.c ^
-            ..\tif_dumpmode.c ..\tif_error.c ..\tif_fax3.c ..\tif_fax3sm.c ..\tif_flush.c ^
+            ..\tif_dumpmode.c ..\tif_error.c ..\tif_fax3.c ..\tif_flush.c ^
             ..\tif_getimage.c ..\tif_lzw.c ..\tif_next.c ..\tif_open.c ^
             ..\tif_packbits.c ..\tif_pixarlog.c ..\tif_predict.c ..\tif_print.c ^
             ..\tif_read.c ..\tif_strip.c ..\tif_swab.c ..\tif_thunder.c ^
@@ -292,7 +292,7 @@ jobs:
           ..\fofi\FoFiType1.cc ..\fofi\FoFiType1C.cc ^
           ..\splash\Splash.cc ..\splash\SplashBitmap.cc ..\splash\SplashClip.cc ^
           ..\splash\SplashFTFontEngine.cc ^
-          ..\splash\SplashFTFontFile.cc ..\splash\SplashFTFont.cc ..\splash\SplashFont.cc ^
+          ..\splash\SplashFTFontFile.cc  ..\splash\SplashFont.cc ^
           ..\splash\SplashFontEngine.cc ..\splash\SplashFontFile.cc ^
           ..\splash\SplashFontFileID.cc ..\splash\SplashPath.cc ^
           ..\splash\SplashPattern.cc ..\splash\SplashScreen.cc ^
